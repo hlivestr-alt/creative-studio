@@ -1,0 +1,75 @@
+{
+  "name": "proya-creative-studio",
+  "version": "1.0.0",
+  "description": "Local creative planning studio for the PROYA 5X Vitamin C series",
+  "author": "PROYA Internal Creative Team",
+  "main": "dist-electron/main.cjs",
+  "type": "module",
+  "private": true,
+  "scripts": {
+    "dev": "concurrently -k \"vite\" \"wait-on tcp:5173 && cross-env VITE_DEV_SERVER_URL=http://localhost:5173 electron .\"",
+    "build:icons": "electron scripts/render-icons.cjs",
+    "build:app": "npm run build:icons && vite build && tsup",
+    "build": "npm run typecheck && npm run build:app && electron-builder --dir",
+    "dist": "npm run typecheck && npm run build:app && electron-builder --win nsis",
+    "typecheck": "tsc --noEmit",
+    "lint": "eslint . --max-warnings=0",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "preview": "vite preview"
+  },
+  "dependencies": {
+    "lucide-react": "latest",
+    "react": "latest",
+    "react-dom": "latest",
+    "react-router-dom": "latest",
+    "sql.js": "latest",
+    "zod": "latest"
+  },
+  "devDependencies": {
+    "@eslint/js": "latest",
+    "@vitejs/plugin-react": "latest",
+    "@types/node": "latest",
+    "@types/react": "latest",
+    "@types/react-dom": "latest",
+    "@types/sql.js": "latest",
+    "concurrently": "latest",
+    "cross-env": "latest",
+    "electron": "latest",
+    "electron-builder": "latest",
+    "eslint": "latest",
+    "eslint-plugin-react-hooks": "latest",
+    "eslint-plugin-react-refresh": "latest",
+    "globals": "latest",
+    "typescript": "latest",
+    "typescript-eslint": "latest",
+    "tsup": "latest",
+    "vite": "latest",
+    "vitest": "latest",
+    "wait-on": "latest"
+  },
+  "build": {
+    "appId": "com.proya.creativestudio",
+    "productName": "PROYA Creative Studio",
+    "directories": { "output": "release" },
+    "files": ["dist/**/*", "dist-electron/**/*", "data/**/*", "prompts/**/*", "package.json"],
+    "extraResources": [
+      { "from": "product-assets", "to": "product-assets" },
+      { "from": "references", "to": "references" },
+      { "from": "assets/app-icon.ico", "to": "app-icon.ico" }
+    ],
+    "extraMetadata": { "main": "dist-electron/main.cjs" },
+    "win": {
+      "target": "nsis",
+      "icon": "assets/app-icon.ico",
+      "artifactName": "PROYA-Creative-Studio-${version}-Setup.${ext}"
+    },
+    "nsis": {
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true,
+      "installerIcon": "assets/app-icon.ico",
+      "uninstallerIcon": "assets/app-icon.ico",
+      "installerHeaderIcon": "assets/app-icon.ico"
+    }
+  }
+}

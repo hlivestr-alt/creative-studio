@@ -1,0 +1,7 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="256" height="256" viewBox="0 0 256 256" fill="none">
+  <title>PROYA Creative Studio application icon</title>
+  <desc>Near-black canvas with a white image frame and a single diagonal notch.</desc>
+  <rect width="256" height="256" rx="28" fill="#0A0A0A"/>
+  <rect x="48" y="48" width="160" height="160" rx="24" stroke="#F5F5F5" stroke-width="22"/>
+  <path d="M169 48L208 87" stroke="#0A0A0A" stroke-width="24" stroke-linecap="butt"/>
+</svg>

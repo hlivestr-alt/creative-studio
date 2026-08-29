@@ -1,0 +1,16 @@
+{
+  "approved": [
+    "brightening", "membantu mencerahkan tampilan kulit", "helps brighten the appearance of skin",
+    "membantu menyamarkan tampilan noda hitam", "helps fade the look of dark spots",
+    "membantu meratakan tampilan warna kulit", "hydrating", "membantu menjaga kelembapan",
+    "gentle daily care", "supports the skin barrier", "helps skin look smoother", "fresh glowing appearance"
+  ],
+  "avoidUnlessApproved": [
+    "memutihkan permanen", "pasti putih", "putih dalam X hari", "menghilangkan flek permanen",
+    "menghilangkan jerawat", "menyembuhkan", "mengobati", "anti-aging pasti",
+    "hasil instan permanen", "works for everyone", "no side effects", "fake clinical percentages",
+    "fake dermatology testing", "fake awards", "fake certifications", "unrealistic before/after claims"
+  ],
+  "rule": "Prefer conservative cosmetic language. Never invent efficacy numbers, certifications, awards, testing, or guaranteed/permanent results.",
+  "source": "references/PROYA_5X_Vitamin_C_AI_Branding_Guide.md#16"
+}

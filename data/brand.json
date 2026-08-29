@@ -1,0 +1,11 @@
+{
+  "brand": "PROYA",
+  "series": "PROYA 5X Vitamin C Series",
+  "coreIdea": "Not just Vitamin C — the evolution of Vitamin C.",
+  "personality": ["Bright", "Fresh", "Scientific", "Clean", "Gentle", "Premium", "Trustworthy", "Modern", "Benefit-led", "Approachable"],
+  "palette": { "orange": "#F6A300", "citrusGlow": "#FFC54D", "cream": "#FFF5E8", "white": "#FFFFFF", "black": "#111111", "beige": "#F3E2C7", "botanicalGreen": "#8DAA2A" },
+  "visualDirection": ["bright", "clean", "warm", "glossy", "hydrated", "premium", "scientific"],
+  "defaultPromptKeywords": ["premium skincare", "clean beauty advertising", "warm citrus glow", "soft studio lighting", "high clarity", "fresh hydration", "glossy reflections", "white and orange palette", "modern scientific beauty", "minimal commercial composition", "crisp e-commerce product photography"],
+  "productReferenceInstruction": "Use the attached product image as the exact packaging reference. Preserve the product's shape, proportions, cap, label layout, logo position, color, and packaging material. Do not redesign the packaging. Only change the environment, camera angle, lighting, props, and composition.",
+  "source": "references/PROYA_5X_Vitamin_C_AI_Branding_Guide.md"
+}
