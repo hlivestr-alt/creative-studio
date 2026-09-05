@@ -2,6 +2,13 @@ node_modules/
 dist/
 dist-electron/
 release/
+# Local packaged-app verification snapshots and deployment staging copies.
+release-build-check*/
+release-token-managed/
+release-verify/
+deploy/china-*/
+deploy/patch-check-*/
+deploy/creative-studio-app/
 *.log
 .DS_Store
 coverage/

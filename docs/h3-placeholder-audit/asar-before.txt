@@ -1,0 +1,148 @@
+release\h3-vram-handoff\previous-app-20260905-112227\resources\app.asar:\dist-electron\main.cjs:offset 108533: gineProductionDefaults.temperature, H3_MAX_TOKENS: variables.maxTokens ?? h3PromptEngineProductionDef
+release\h3-vram-handoff\previous-app-20260905-112227\resources\app.asar:\dist-electron\main.cjs:offset 121882: H3_TEMPERATURE}}", max_tokens: "{{H3_MAX_TOKENS}}", timeout_seconds: "{{H3_PROMPT_TIMEOUT}}",
+release\h3-vram-handoff\previous-app-20260905-112227\resources\app.asar:\dist-electron\main.cjs:offset 128846: mpt temperature" }, { placeholder: "{{H3_MAX_TOKENS}}", nodeId: "149", inputName: "max_tokens", classTy
+release\h3-vram-handoff\previous-app-20260905-112227\resources\app.asar:\dist-electron\main.cjs:offset 121867: emperature: "{{H3_TEMPERATURE}}", max_tokens: "{{H3_MAX_TOKENS}}", timeout_seconds: "{{H3_PRO
+release\h3-vram-handoff\previous-app-20260905-112227\resources\app.asar:\dist-electron\main.cjs:offset 128891: X_TOKENS}}", nodeId: "149", inputName: "max_tokens", classType: "MiniMaxH3PromptEnhancer", role: "Exact c
+release\h3-vram-handoff\previous-app-20260905-112227\resources\app.asar:\dist-electron\main.cjs:offset 52856: ctionDefaults = { temperature: 0.2, maxTokens: 8192, repairAttempts: 2, disableThinking: true, 
+release\h3-vram-handoff\previous-app-20260905-112227\resources\app.asar:\dist-electron\main.cjs:offset 61068: od.z.number().finite().min(0).max(2), maxTokens: import_zod.z.number().int().min(256).max(32768), rep
+release\h3-vram-handoff\previous-app-20260905-112227\resources\app.asar:\dist-electron\main.cjs:offset 68759: xTokens) ?? numericOrNull(promptEngine?.maxTokens), llmTimeoutSeconds: numericOrNull(row.llmTimeoutSe
+release\h3-vram-handoff\previous-app-20260905-112227\resources\app.asar:\dist-electron\main.cjs:offset 71247: rsedState.llmMaxTokens ?? promptEngine?.maxTokens ?? null; const llmTimeoutSeconds = parsedState.llmTim
+release\h3-vram-handoff\previous-app-20260905-112227\resources\app.asar:\dist-electron\main.cjs:offset 75632: ns: state.llmMaxTokens ?? promptEngine?.maxTokens ?? null, llmTimeoutSeconds: state.llmTimeoutSeconds
+release\h3-vram-handoff\previous-app-20260905-112227\resources\app.asar:\dist-electron\main.cjs:offset 92477: put.llmMaxTokens ?? input.promptEngine?.maxTokens ?? null; const llmTimeoutSeconds = input.llmTimeout
+release\h3-vram-handoff\previous-app-20260905-112227\resources\app.asar:\dist-electron\main.cjs:offset 108558: mperature, H3_MAX_TOKENS: variables.maxTokens ?? h3PromptEngineProductionDefaults.maxTokens, H3_R
+release\h3-vram-handoff\previous-app-20260905-112227\resources\app.asar:\dist-electron\main.cjs:offset 108604: ens ?? h3PromptEngineProductionDefaults.maxTokens, H3_REPAIR_ATTEMPTS: variables.repairAttempts ?? h3
+release\h3-vram-handoff\previous-app-20260905-112227\resources\app.asar:\dist-electron\main.cjs:offset 145487:  2."); if (!Number.isInteger(settings.maxTokens) || settings.maxTokens < 256 || settings.maxTokens > 32
+release\h3-vram-handoff\previous-app-20260905-112227\resources\app.asar:\dist-electron\main.cjs:offset 145510: Integer(settings.maxTokens) || settings.maxTokens < 256 || settings.maxTokens > 32768) throw new Error("H
+release\h3-vram-handoff\previous-app-20260905-112227\resources\app.asar:\dist-electron\main.cjs:offset 145538: || settings.maxTokens < 256 || settings.maxTokens > 32768) throw new Error("H3 Prompt Engine max tokens m
+release\h3-vram-handoff\previous-app-20260905-112227\resources\app.asar:\dist-electron\main.cjs:offset 149093: mptEngine !== null ? storedPromptEngine.maxTokens : void 0; if (storedTimeout === 120 || storedTimeou
+release\h3-vram-handoff\previous-app-20260905-112227\resources\app.asar:\dist-electron\main.cjs:offset 149409: Engine = { ...candidate.h3PromptEngine, maxTokens: h3PromptEngineProductionDefaults.maxTokens }; } 
+release\h3-vram-handoff\previous-app-20260905-112227\resources\app.asar:\dist-electron\main.cjs:offset 149453: okens: h3PromptEngineProductionDefaults.maxTokens }; } } if (candidate.h3PromptEngine && typeof c
+release\h3-vram-handoff\previous-app-20260905-112227\resources\app.asar:\dist-electron\main.cjs:offset 229234: temperature, llmMaxTokens: settings.maxTokens, llmTimeoutSeconds: settings.timeoutSeconds, ll
+release\h3-vram-handoff\previous-app-20260905-112227\resources\app.asar:\dist-electron\main.cjs:offset 270673: ature: promptEngine?.temperature, maxTokens: promptEngine?.maxTokens, repairAttempts: promptE
+release\h3-vram-handoff\previous-app-20260905-112227\resources\app.asar:\dist-electron\main.cjs:offset 270698: erature, maxTokens: promptEngine?.maxTokens, repairAttempts: promptEngine?.repairAttempts, 
+release\h3-vram-handoff\previous-app-20260905-112227\resources\app.asar:\dist\assets\index-CCBt6FKU.js:offset 420391: ture:`{{H3_TEMPERATURE}}`,max_tokens:`{{H3_MAX_TOKENS}}`,timeout_seconds:`{{H3_PROMPT_TIMEOUT}}`,repair_a
+release\h3-vram-handoff\previous-app-20260905-112227\resources\app.asar:\dist\assets\index-CCBt6FKU.js:offset 424927: ed prompt temperature`},{placeholder:`{{H3_MAX_TOKENS}}`,nodeId:`149`,inputName:`max_tokens`,classType:`M
+release\h3-vram-handoff\previous-app-20260905-112227\resources\app.asar:\dist\assets\index-CCBt6FKU.js:offset 420377: key:``,temperature:`{{H3_TEMPERATURE}}`,max_tokens:`{{H3_MAX_TOKENS}}`,timeout_seconds:`{{H3_PROMPT_TIMEO
+release\h3-vram-handoff\previous-app-20260905-112227\resources\app.asar:\dist\assets\index-CCBt6FKU.js:offset 424968: 3_MAX_TOKENS}}`,nodeId:`149`,inputName:`max_tokens`,classType:`MiniMaxH3PromptEnhancer`,role:`Exact confi
+release\h3-vram-handoff\previous-app-20260905-112227\resources\app.asar:\dist\assets\index-CCBt6FKU.js:offset 374703: b`,vu=`Qwen 3.8 27B`,yu={temperature:.2,maxTokens:8192,repairAttempts:2,disableThinking:!0,timeoutSeconds
+release\h3-vram-handoff\previous-app-20260905-112227\resources\app.asar:\dist\assets\index-CCBt6FKU.js:offset 379501: temperature:El().finite().min(0).max(2),maxTokens:El().int().min(256).max(32768),repairAttempts:El().int(
+release\h3-vram-handoff\previous-app-20260905-112227\resources\app.asar:\dist\assets\index-CCBt6FKU.js:offset 546071: emperature:g.temperature,llmMaxTokens:g.maxTokens,llmTimeoutSeconds:g.timeoutSeconds,llmRepairAttempts:g.
+release-build-check-4\win-unpacked\resources\app.asar:\dist-electron\main.cjs:offset 96680: TURE: variables.temperature ?? 0.2, H3_MAX_TOKENS: variables.maxTokens ?? 8192, H3_REPAIR_ATTEMPT
+release-build-check-4\win-unpacked\resources\app.asar:\dist-electron\main.cjs:offset 109857: H3_TEMPERATURE}}", max_tokens: "{{H3_MAX_TOKENS}}", timeout_seconds: "{{H3_PROMPT_TIMEOUT}}",
+release-build-check-4\win-unpacked\resources\app.asar:\dist-electron\main.cjs:offset 109842: emperature: "{{H3_TEMPERATURE}}", max_tokens: "{{H3_MAX_TOKENS}}", timeout_seconds: "{{H3_PRO
+release-build-check-4\win-unpacked\resources\app.asar:\dist-electron\main.cjs:offset 60847: od.z.number().finite().min(0).max(2), maxTokens: import_zod.z.number().int().min(256).max(32768), rep
+release-build-check-4\win-unpacked\resources\app.asar:\dist-electron\main.cjs:offset 96705: re ?? 0.2, H3_MAX_TOKENS: variables.maxTokens ?? 8192, H3_REPAIR_ATTEMPTS: variables.repairAttemp
+release-build-check-4\win-unpacked\resources\app.asar:\dist-electron\main.cjs:offset 128443: (!Number.isInteger(request.promptEngine.maxTokens) || request.promptEngine.maxTokens < 256) throw new Err
+release-build-check-4\win-unpacked\resources\app.asar:\dist-electron\main.cjs:offset 128478: gine.maxTokens) || request.promptEngine.maxTokens < 256) throw new Error("H3 Prompt Engine max tokens mus
+release-build-check-4\win-unpacked\resources\app.asar:\dist-electron\main.cjs:offset 133919:  model: "", temperature: 0.2, maxTokens: 8192, repairAttempts: 2, disableThinking: true
+release-build-check-4\win-unpacked\resources\app.asar:\dist-electron\main.cjs:offset 244569: ature: promptEngine?.temperature, maxTokens: promptEngine?.maxTokens, repairAttempts: promptE
+release-build-check-4\win-unpacked\resources\app.asar:\dist-electron\main.cjs:offset 244594: erature, maxTokens: promptEngine?.maxTokens, repairAttempts: promptEngine?.repairAttempts, 
+release-build-check-4\win-unpacked\resources\app.asar:\dist\assets\index-nEvUv3Vy.js:offset 420261: ture:`{{H3_TEMPERATURE}}`,max_tokens:`{{H3_MAX_TOKENS}}`,timeout_seconds:`{{H3_PROMPT_TIMEOUT}}`,repair_a
+release-build-check-4\win-unpacked\resources\app.asar:\dist\assets\index-nEvUv3Vy.js:offset 420247: key:``,temperature:`{{H3_TEMPERATURE}}`,max_tokens:`{{H3_MAX_TOKENS}}`,timeout_seconds:`{{H3_PROMPT_TIMEO
+release-build-check-4\win-unpacked\resources\app.asar:\dist\assets\index-nEvUv3Vy.js:offset 379378: temperature:El().finite().min(0).max(2),maxTokens:El().int().min(256).max(32768),repairAttempts:El().int(
+release-build-check-4\win-unpacked\resources\app.asar:\dist\assets\index-nEvUv3Vy.js:offset 533869: .0.0.1:1234/v1`,model:``,temperature:.2,maxTokens:8192,repairAttempts:2,disableThinking:!0,unloadModelBef
+release-build-check-4\win-unpacked\resources\app.asar:\dist\assets\index-nEvUv3Vy.js:offset 556171: ber`,min:512,max:32768,step:256,value:e.maxTokens,onChange:e=>i({maxTokens:Number(e.target.value)})})]}),
+release-build-check-4\win-unpacked\resources\app.asar:\dist\assets\index-nEvUv3Vy.js:offset 556196: ep:256,value:e.maxTokens,onChange:e=>i({maxTokens:Number(e.target.value)})})]}),(0,M.jsxs)(`label`,{class
+release-build-check-5\win-unpacked\resources\app.asar:\dist-electron\main.cjs:offset 96680: TURE: variables.temperature ?? 0.2, H3_MAX_TOKENS: variables.maxTokens ?? 8192, H3_REPAIR_ATTEMPT
+release-build-check-5\win-unpacked\resources\app.asar:\dist-electron\main.cjs:offset 109857: H3_TEMPERATURE}}", max_tokens: "{{H3_MAX_TOKENS}}", timeout_seconds: "{{H3_PROMPT_TIMEOUT}}",
+release-build-check-5\win-unpacked\resources\app.asar:\dist-electron\main.cjs:offset 109842: emperature: "{{H3_TEMPERATURE}}", max_tokens: "{{H3_MAX_TOKENS}}", timeout_seconds: "{{H3_PRO
+release-build-check-5\win-unpacked\resources\app.asar:\dist-electron\main.cjs:offset 60847: od.z.number().finite().min(0).max(2), maxTokens: import_zod.z.number().int().min(256).max(32768), rep
+release-build-check-5\win-unpacked\resources\app.asar:\dist-electron\main.cjs:offset 96705: re ?? 0.2, H3_MAX_TOKENS: variables.maxTokens ?? 8192, H3_REPAIR_ATTEMPTS: variables.repairAttemp
+release-build-check-5\win-unpacked\resources\app.asar:\dist-electron\main.cjs:offset 128443: (!Number.isInteger(request.promptEngine.maxTokens) || request.promptEngine.maxTokens < 256) throw new Err
+release-build-check-5\win-unpacked\resources\app.asar:\dist-electron\main.cjs:offset 128478: gine.maxTokens) || request.promptEngine.maxTokens < 256) throw new Error("H3 Prompt Engine max tokens mus
+release-build-check-5\win-unpacked\resources\app.asar:\dist-electron\main.cjs:offset 133919:  model: "", temperature: 0.2, maxTokens: 8192, repairAttempts: 2, disableThinking: true
+release-build-check-5\win-unpacked\resources\app.asar:\dist-electron\main.cjs:offset 244650: ature: promptEngine?.temperature, maxTokens: promptEngine?.maxTokens, repairAttempts: promptE
+release-build-check-5\win-unpacked\resources\app.asar:\dist-electron\main.cjs:offset 244675: erature, maxTokens: promptEngine?.maxTokens, repairAttempts: promptEngine?.repairAttempts, 
+release-build-check-5\win-unpacked\resources\app.asar:\dist\assets\index-DF_xuvQy.js:offset 420261: ture:`{{H3_TEMPERATURE}}`,max_tokens:`{{H3_MAX_TOKENS}}`,timeout_seconds:`{{H3_PROMPT_TIMEOUT}}`,repair_a
+release-build-check-5\win-unpacked\resources\app.asar:\dist\assets\index-DF_xuvQy.js:offset 420247: key:``,temperature:`{{H3_TEMPERATURE}}`,max_tokens:`{{H3_MAX_TOKENS}}`,timeout_seconds:`{{H3_PROMPT_TIMEO
+release-build-check-5\win-unpacked\resources\app.asar:\dist\assets\index-DF_xuvQy.js:offset 379378: temperature:El().finite().min(0).max(2),maxTokens:El().int().min(256).max(32768),repairAttempts:El().int(
+release-build-check-5\win-unpacked\resources\app.asar:\dist\assets\index-DF_xuvQy.js:offset 534110: .0.0.1:1234/v1`,model:``,temperature:.2,maxTokens:8192,repairAttempts:2,disableThinking:!0,unloadModelBef
+release-build-check-5\win-unpacked\resources\app.asar:\dist\assets\index-DF_xuvQy.js:offset 556412: ber`,min:512,max:32768,step:256,value:e.maxTokens,onChange:e=>i({maxTokens:Number(e.target.value)})})]}),
+release-build-check-5\win-unpacked\resources\app.asar:\dist\assets\index-DF_xuvQy.js:offset 556437: ep:256,value:e.maxTokens,onChange:e=>i({maxTokens:Number(e.target.value)})})]}),(0,M.jsxs)(`label`,{class
+release-build-check-6\win-unpacked\resources\app.asar:\dist-electron\main.cjs:offset 103581: gineProductionDefaults.temperature, H3_MAX_TOKENS: variables.maxTokens ?? h3PromptEngineProductionDef
+release-build-check-6\win-unpacked\resources\app.asar:\dist-electron\main.cjs:offset 116930: H3_TEMPERATURE}}", max_tokens: "{{H3_MAX_TOKENS}}", timeout_seconds: "{{H3_PROMPT_TIMEOUT}}",
+release-build-check-6\win-unpacked\resources\app.asar:\dist-electron\main.cjs:offset 123774: mpt temperature" }, { placeholder: "{{H3_MAX_TOKENS}}", nodeId: "149", inputName: "max_tokens", classTy
+release-build-check-6\win-unpacked\resources\app.asar:\dist-electron\main.cjs:offset 116915: emperature: "{{H3_TEMPERATURE}}", max_tokens: "{{H3_MAX_TOKENS}}", timeout_seconds: "{{H3_PRO
+release-build-check-6\win-unpacked\resources\app.asar:\dist-electron\main.cjs:offset 123819: X_TOKENS}}", nodeId: "149", inputName: "max_tokens", classType: "MiniMaxH3PromptEnhancer", role: "Exact c
+release-build-check-6\win-unpacked\resources\app.asar:\dist-electron\main.cjs:offset 52808: ctionDefaults = { temperature: 0.2, maxTokens: 8192, repairAttempts: 2, disableThinking: true, 
+release-build-check-6\win-unpacked\resources\app.asar:\dist-electron\main.cjs:offset 60998: od.z.number().finite().min(0).max(2), maxTokens: import_zod.z.number().int().min(256).max(32768), rep
+release-build-check-6\win-unpacked\resources\app.asar:\dist-electron\main.cjs:offset 68587: xTokens) ?? numericOrNull(promptEngine?.maxTokens), llmTimeoutSeconds: numericOrNull(row.llmTimeoutSe
+release-build-check-6\win-unpacked\resources\app.asar:\dist-electron\main.cjs:offset 70364: rsedState.llmMaxTokens ?? promptEngine?.maxTokens ?? null; const llmTimeoutSeconds = parsedState.llmTim
+release-build-check-6\win-unpacked\resources\app.asar:\dist-electron\main.cjs:offset 74023: ns: state.llmMaxTokens ?? promptEngine?.maxTokens ?? null, llmTimeoutSeconds: state.llmTimeoutSeconds
+release-build-check-6\win-unpacked\resources\app.asar:\dist-electron\main.cjs:offset 89745: put.llmMaxTokens ?? input.promptEngine?.maxTokens ?? null; const llmTimeoutSeconds = input.llmTimeout
+release-build-check-6\win-unpacked\resources\app.asar:\dist-electron\main.cjs:offset 103606: mperature, H3_MAX_TOKENS: variables.maxTokens ?? h3PromptEngineProductionDefaults.maxTokens, H3_R
+release-build-check-6\win-unpacked\resources\app.asar:\dist-electron\main.cjs:offset 103652: ens ?? h3PromptEngineProductionDefaults.maxTokens, H3_REPAIR_ATTEMPTS: variables.repairAttempts ?? h3
+release-build-check-6\win-unpacked\resources\app.asar:\dist-electron\main.cjs:offset 140170:  2."); if (!Number.isInteger(settings.maxTokens) || settings.maxTokens < 256 || settings.maxTokens > 32
+release-build-check-6\win-unpacked\resources\app.asar:\dist-electron\main.cjs:offset 140193: Integer(settings.maxTokens) || settings.maxTokens < 256 || settings.maxTokens > 32768) throw new Error("H
+release-build-check-6\win-unpacked\resources\app.asar:\dist-electron\main.cjs:offset 140221: || settings.maxTokens < 256 || settings.maxTokens > 32768) throw new Error("H3 Prompt Engine max tokens m
+release-build-check-6\win-unpacked\resources\app.asar:\dist-electron\main.cjs:offset 222682: temperature, llmMaxTokens: settings.maxTokens, llmTimeoutSeconds: settings.timeoutSeconds, ll
+release-build-check-6\win-unpacked\resources\app.asar:\dist-electron\main.cjs:offset 256727: ature: promptEngine?.temperature, maxTokens: promptEngine?.maxTokens, repairAttempts: promptE
+release-build-check-6\win-unpacked\resources\app.asar:\dist-electron\main.cjs:offset 256752: erature, maxTokens: promptEngine?.maxTokens, repairAttempts: promptEngine?.repairAttempts, 
+release-build-check-6\win-unpacked\resources\app.asar:\dist\assets\index-CYTLok__.js:offset 420347: ture:`{{H3_TEMPERATURE}}`,max_tokens:`{{H3_MAX_TOKENS}}`,timeout_seconds:`{{H3_PROMPT_TIMEOUT}}`,repair_a
+release-build-check-6\win-unpacked\resources\app.asar:\dist\assets\index-CYTLok__.js:offset 424840: ed prompt temperature`},{placeholder:`{{H3_MAX_TOKENS}}`,nodeId:`149`,inputName:`max_tokens`,classType:`M
+release-build-check-6\win-unpacked\resources\app.asar:\dist\assets\index-CYTLok__.js:offset 420333: key:``,temperature:`{{H3_TEMPERATURE}}`,max_tokens:`{{H3_MAX_TOKENS}}`,timeout_seconds:`{{H3_PROMPT_TIMEO
+release-build-check-6\win-unpacked\resources\app.asar:\dist\assets\index-CYTLok__.js:offset 424881: 3_MAX_TOKENS}}`,nodeId:`149`,inputName:`max_tokens`,classType:`MiniMaxH3PromptEnhancer`,role:`Exact confi
+release-build-check-6\win-unpacked\resources\app.asar:\dist\assets\index-CYTLok__.js:offset 374664: emote ComfyUI PC.`}],_u={temperature:.2,maxTokens:8192,repairAttempts:2,disableThinking:!0,timeoutSeconds
+release-build-check-6\win-unpacked\resources\app.asar:\dist\assets\index-CYTLok__.js:offset 379460: temperature:El().finite().min(0).max(2),maxTokens:El().int().min(256).max(32768),repairAttempts:El().int(
+release-build-check-6\win-unpacked\resources\app.asar:\dist\assets\index-CYTLok__.js:offset 545309: emperature:g.temperature,llmMaxTokens:g.maxTokens,llmTimeoutSeconds:g.timeoutSeconds,llmRepairAttempts:g.
+release-build-check-6\win-unpacked\resources\app.asar:\dist\assets\index-CYTLok__.js:offset 561409: ber`,min:512,max:32768,step:256,value:e.maxTokens,onChange:e=>i({maxTokens:Number(e.target.value)})})]}),
+release-build-check-6\win-unpacked\resources\app.asar:\dist\assets\index-CYTLok__.js:offset 561434: ep:256,value:e.maxTokens,onChange:e=>i({maxTokens:Number(e.target.value)})})]}),(0,M.jsxs)(`label`,{class
+release-build-check-7\win-unpacked\resources\app.asar:\dist-electron\main.cjs:offset 103581: gineProductionDefaults.temperature, H3_MAX_TOKENS: variables.maxTokens ?? h3PromptEngineProductionDef
+release-build-check-7\win-unpacked\resources\app.asar:\dist-electron\main.cjs:offset 116930: H3_TEMPERATURE}}", max_tokens: "{{H3_MAX_TOKENS}}", timeout_seconds: "{{H3_PROMPT_TIMEOUT}}",
+release-build-check-7\win-unpacked\resources\app.asar:\dist-electron\main.cjs:offset 123774: mpt temperature" }, { placeholder: "{{H3_MAX_TOKENS}}", nodeId: "149", inputName: "max_tokens", classTy
+release-build-check-7\win-unpacked\resources\app.asar:\dist-electron\main.cjs:offset 116915: emperature: "{{H3_TEMPERATURE}}", max_tokens: "{{H3_MAX_TOKENS}}", timeout_seconds: "{{H3_PRO
+release-build-check-7\win-unpacked\resources\app.asar:\dist-electron\main.cjs:offset 123819: X_TOKENS}}", nodeId: "149", inputName: "max_tokens", classType: "MiniMaxH3PromptEnhancer", role: "Exact c
+release-build-check-7\win-unpacked\resources\app.asar:\dist-electron\main.cjs:offset 52808: ctionDefaults = { temperature: 0.2, maxTokens: 8192, repairAttempts: 2, disableThinking: true, 
+release-build-check-7\win-unpacked\resources\app.asar:\dist-electron\main.cjs:offset 60998: od.z.number().finite().min(0).max(2), maxTokens: import_zod.z.number().int().min(256).max(32768), rep
+release-build-check-7\win-unpacked\resources\app.asar:\dist-electron\main.cjs:offset 68587: xTokens) ?? numericOrNull(promptEngine?.maxTokens), llmTimeoutSeconds: numericOrNull(row.llmTimeoutSe
+release-build-check-7\win-unpacked\resources\app.asar:\dist-electron\main.cjs:offset 70364: rsedState.llmMaxTokens ?? promptEngine?.maxTokens ?? null; const llmTimeoutSeconds = parsedState.llmTim
+release-build-check-7\win-unpacked\resources\app.asar:\dist-electron\main.cjs:offset 74023: ns: state.llmMaxTokens ?? promptEngine?.maxTokens ?? null, llmTimeoutSeconds: state.llmTimeoutSeconds
+release-build-check-7\win-unpacked\resources\app.asar:\dist-electron\main.cjs:offset 89745: put.llmMaxTokens ?? input.promptEngine?.maxTokens ?? null; const llmTimeoutSeconds = input.llmTimeout
+release-build-check-7\win-unpacked\resources\app.asar:\dist-electron\main.cjs:offset 103606: mperature, H3_MAX_TOKENS: variables.maxTokens ?? h3PromptEngineProductionDefaults.maxTokens, H3_R
+release-build-check-7\win-unpacked\resources\app.asar:\dist-electron\main.cjs:offset 103652: ens ?? h3PromptEngineProductionDefaults.maxTokens, H3_REPAIR_ATTEMPTS: variables.repairAttempts ?? h3
+release-build-check-7\win-unpacked\resources\app.asar:\dist-electron\main.cjs:offset 140170:  2."); if (!Number.isInteger(settings.maxTokens) || settings.maxTokens < 256 || settings.maxTokens > 32
+release-build-check-7\win-unpacked\resources\app.asar:\dist-electron\main.cjs:offset 140193: Integer(settings.maxTokens) || settings.maxTokens < 256 || settings.maxTokens > 32768) throw new Error("H
+release-build-check-7\win-unpacked\resources\app.asar:\dist-electron\main.cjs:offset 140221: || settings.maxTokens < 256 || settings.maxTokens > 32768) throw new Error("H3 Prompt Engine max tokens m
+release-build-check-7\win-unpacked\resources\app.asar:\dist-electron\main.cjs:offset 222682: temperature, llmMaxTokens: settings.maxTokens, llmTimeoutSeconds: settings.timeoutSeconds, ll
+release-build-check-7\win-unpacked\resources\app.asar:\dist-electron\main.cjs:offset 256727: ature: promptEngine?.temperature, maxTokens: promptEngine?.maxTokens, repairAttempts: promptE
+release-build-check-7\win-unpacked\resources\app.asar:\dist-electron\main.cjs:offset 256752: erature, maxTokens: promptEngine?.maxTokens, repairAttempts: promptEngine?.repairAttempts, 
+release-build-check-7\win-unpacked\resources\app.asar:\dist\assets\index-CYTLok__.js:offset 420347: ture:`{{H3_TEMPERATURE}}`,max_tokens:`{{H3_MAX_TOKENS}}`,timeout_seconds:`{{H3_PROMPT_TIMEOUT}}`,repair_a
+release-build-check-7\win-unpacked\resources\app.asar:\dist\assets\index-CYTLok__.js:offset 424840: ed prompt temperature`},{placeholder:`{{H3_MAX_TOKENS}}`,nodeId:`149`,inputName:`max_tokens`,classType:`M
+release-build-check-7\win-unpacked\resources\app.asar:\dist\assets\index-CYTLok__.js:offset 420333: key:``,temperature:`{{H3_TEMPERATURE}}`,max_tokens:`{{H3_MAX_TOKENS}}`,timeout_seconds:`{{H3_PROMPT_TIMEO
+release-build-check-7\win-unpacked\resources\app.asar:\dist\assets\index-CYTLok__.js:offset 424881: 3_MAX_TOKENS}}`,nodeId:`149`,inputName:`max_tokens`,classType:`MiniMaxH3PromptEnhancer`,role:`Exact confi
+release-build-check-7\win-unpacked\resources\app.asar:\dist\assets\index-CYTLok__.js:offset 374664: emote ComfyUI PC.`}],_u={temperature:.2,maxTokens:8192,repairAttempts:2,disableThinking:!0,timeoutSeconds
+release-build-check-7\win-unpacked\resources\app.asar:\dist\assets\index-CYTLok__.js:offset 379460: temperature:El().finite().min(0).max(2),maxTokens:El().int().min(256).max(32768),repairAttempts:El().int(
+release-build-check-7\win-unpacked\resources\app.asar:\dist\assets\index-CYTLok__.js:offset 545309: emperature:g.temperature,llmMaxTokens:g.maxTokens,llmTimeoutSeconds:g.timeoutSeconds,llmRepairAttempts:g.
+release-build-check-7\win-unpacked\resources\app.asar:\dist\assets\index-CYTLok__.js:offset 561409: ber`,min:512,max:32768,step:256,value:e.maxTokens,onChange:e=>i({maxTokens:Number(e.target.value)})})]}),
+release-build-check-7\win-unpacked\resources\app.asar:\dist\assets\index-CYTLok__.js:offset 561434: ep:256,value:e.maxTokens,onChange:e=>i({maxTokens:Number(e.target.value)})})]}),(0,M.jsxs)(`label`,{class
+release-build-check-8\win-unpacked\resources\app.asar:\dist-electron\main.cjs:offset 103581: gineProductionDefaults.temperature, H3_MAX_TOKENS: variables.maxTokens ?? h3PromptEngineProductionDef
+release-build-check-8\win-unpacked\resources\app.asar:\dist-electron\main.cjs:offset 116930: H3_TEMPERATURE}}", max_tokens: "{{H3_MAX_TOKENS}}", timeout_seconds: "{{H3_PROMPT_TIMEOUT}}",
+release-build-check-8\win-unpacked\resources\app.asar:\dist-electron\main.cjs:offset 123774: mpt temperature" }, { placeholder: "{{H3_MAX_TOKENS}}", nodeId: "149", inputName: "max_tokens", classTy
+release-build-check-8\win-unpacked\resources\app.asar:\dist-electron\main.cjs:offset 116915: emperature: "{{H3_TEMPERATURE}}", max_tokens: "{{H3_MAX_TOKENS}}", timeout_seconds: "{{H3_PRO
+release-build-check-8\win-unpacked\resources\app.asar:\dist-electron\main.cjs:offset 123819: X_TOKENS}}", nodeId: "149", inputName: "max_tokens", classType: "MiniMaxH3PromptEnhancer", role: "Exact c
+release-build-check-8\win-unpacked\resources\app.asar:\dist-electron\main.cjs:offset 52808: ctionDefaults = { temperature: 0.2, maxTokens: 8192, repairAttempts: 2, disableThinking: true, 
+release-build-check-8\win-unpacked\resources\app.asar:\dist-electron\main.cjs:offset 60998: od.z.number().finite().min(0).max(2), maxTokens: import_zod.z.number().int().min(256).max(32768), rep
+release-build-check-8\win-unpacked\resources\app.asar:\dist-electron\main.cjs:offset 68587: xTokens) ?? numericOrNull(promptEngine?.maxTokens), llmTimeoutSeconds: numericOrNull(row.llmTimeoutSe
+release-build-check-8\win-unpacked\resources\app.asar:\dist-electron\main.cjs:offset 70364: rsedState.llmMaxTokens ?? promptEngine?.maxTokens ?? null; const llmTimeoutSeconds = parsedState.llmTim
+release-build-check-8\win-unpacked\resources\app.asar:\dist-electron\main.cjs:offset 74023: ns: state.llmMaxTokens ?? promptEngine?.maxTokens ?? null, llmTimeoutSeconds: state.llmTimeoutSeconds
+release-build-check-8\win-unpacked\resources\app.asar:\dist-electron\main.cjs:offset 89745: put.llmMaxTokens ?? input.promptEngine?.maxTokens ?? null; const llmTimeoutSeconds = input.llmTimeout
+release-build-check-8\win-unpacked\resources\app.asar:\dist-electron\main.cjs:offset 103606: mperature, H3_MAX_TOKENS: variables.maxTokens ?? h3PromptEngineProductionDefaults.maxTokens, H3_R
+release-build-check-8\win-unpacked\resources\app.asar:\dist-electron\main.cjs:offset 103652: ens ?? h3PromptEngineProductionDefaults.maxTokens, H3_REPAIR_ATTEMPTS: variables.repairAttempts ?? h3
+release-build-check-8\win-unpacked\resources\app.asar:\dist-electron\main.cjs:offset 140170:  2."); if (!Number.isInteger(settings.maxTokens) || settings.maxTokens < 256 || settings.maxTokens > 32
+release-build-check-8\win-unpacked\resources\app.asar:\dist-electron\main.cjs:offset 140193: Integer(settings.maxTokens) || settings.maxTokens < 256 || settings.maxTokens > 32768) throw new Error("H
+release-build-check-8\win-unpacked\resources\app.asar:\dist-electron\main.cjs:offset 140221: || settings.maxTokens < 256 || settings.maxTokens > 32768) throw new Error("H3 Prompt Engine max tokens m
+release-build-check-8\win-unpacked\resources\app.asar:\dist-electron\main.cjs:offset 143636: mptEngine !== null ? storedPromptEngine.maxTokens : void 0; if (storedTimeout === 120 || storedTimeou
+release-build-check-8\win-unpacked\resources\app.asar:\dist-electron\main.cjs:offset 143952: Engine = { ...candidate.h3PromptEngine, maxTokens: h3PromptEngineProductionDefaults.maxTokens }; } 
+release-build-check-8\win-unpacked\resources\app.asar:\dist-electron\main.cjs:offset 143996: okens: h3PromptEngineProductionDefaults.maxTokens }; } } const parsed = appSettingsSchema.safePar
+release-build-check-8\win-unpacked\resources\app.asar:\dist-electron\main.cjs:offset 222985: temperature, llmMaxTokens: settings.maxTokens, llmTimeoutSeconds: settings.timeoutSeconds, ll
+release-build-check-8\win-unpacked\resources\app.asar:\dist-electron\main.cjs:offset 257030: ature: promptEngine?.temperature, maxTokens: promptEngine?.maxTokens, repairAttempts: promptE
+release-build-check-8\win-unpacked\resources\app.asar:\dist-electron\main.cjs:offset 257055: erature, maxTokens: promptEngine?.maxTokens, repairAttempts: promptEngine?.repairAttempts, 
+release-build-check-8\win-unpacked\resources\app.asar:\dist\assets\index-CYTLok__.js:offset 420347: ture:`{{H3_TEMPERATURE}}`,max_tokens:`{{H3_MAX_TOKENS}}`,timeout_seconds:`{{H3_PROMPT_TIMEOUT}}`,repair_a
+release-build-check-8\win-unpacked\resources\app.asar:\dist\assets\index-CYTLok__.js:offset 424840: ed prompt temperature`},{placeholder:`{{H3_MAX_TOKENS}}`,nodeId:`149`,inputName:`max_tokens`,classType:`M
+release-build-check-8\win-unpacked\resources\app.asar:\dist\assets\index-CYTLok__.js:offset 420333: key:``,temperature:`{{H3_TEMPERATURE}}`,max_tokens:`{{H3_MAX_TOKENS}}`,timeout_seconds:`{{H3_PROMPT_TIMEO
+release-build-check-8\win-unpacked\resources\app.asar:\dist\assets\index-CYTLok__.js:offset 424881: 3_MAX_TOKENS}}`,nodeId:`149`,inputName:`max_tokens`,classType:`MiniMaxH3PromptEnhancer`,role:`Exact confi
+release-build-check-8\win-unpacked\resources\app.asar:\dist\assets\index-CYTLok__.js:offset 374664: emote ComfyUI PC.`}],_u={temperature:.2,maxTokens:8192,repairAttempts:2,disableThinking:!0,timeoutSeconds
+release-build-check-8\win-unpacked\resources\app.asar:\dist\assets\index-CYTLok__.js:offset 379460: temperature:El().finite().min(0).max(2),maxTokens:El().int().min(256).max(32768),repairAttempts:El().int(
+release-build-check-8\win-unpacked\resources\app.asar:\dist\assets\index-CYTLok__.js:offset 545309: emperature:g.temperature,llmMaxTokens:g.maxTokens,llmTimeoutSeconds:g.timeoutSeconds,llmRepairAttempts:g.
+release-build-check-8\win-unpacked\resources\app.asar:\dist\assets\index-CYTLok__.js:offset 561409: ber`,min:512,max:32768,step:256,value:e.maxTokens,onChange:e=>i({maxTokens:Number(e.target.value)})})]}),
+release-build-check-8\win-unpacked\resources\app.asar:\dist\assets\index-CYTLok__.js:offset 561434: ep:256,value:e.maxTokens,onChange:e=>i({maxTokens:Number(e.target.value)})})]}),(0,M.jsxs)(`label`,{class

@@ -1,0 +1,580 @@
+diff --git a/README.md b/README.md
+index da29611..14facac 100644
+--- a/README.md
++++ b/README.md
+@@ -26,7 +26,7 @@ This node pack transforms simple natural language ideas and multimodal reference
+ |---|---|---|
+ | **H3 Prompt Contracts** | Single unstructured block | **Strict 6-Block Anatomy** (Ref2VA) & **3-Block Structure** (T2VA/I2VA/FL2VA/L2VA) |
+ | **Dialogue Fidelity** | Translates or paraphrases quotes | **100% Verbatim Spoken Dialogue** in `<d>[Language] ...</d>` blocks |
+-| **Multilingual & Dialects** | Generic or broken `[Original language]` | **17 Canonical Languages + 88 Dialect Aliases** (Castilian, Québécois, Flemish, etc.) |
++| **Multilingual & Dialects** | Generic or broken `[Original language]` | **22 Canonical Languages + 93 Dialect Aliases** (Castilian, Québécois, Flemish, etc.) |
+ | **Audio Reference Binding** | Treated as background noise | **Cross-Modal Voice Binding** (`<Audio N>` $\rightarrow$ `<Subject N> (Sx)`) |
+ | **Visual Text vs Speech** | Signs converted into dialogue | **Intelligent Separation** of signs/shirts/doors from spoken character dialogue |
+ | **Titles & Credits** | Loose text requests and unstable spelling | **Seven deterministic cinematic recipes**, timed readable holds, exact text lock, hierarchy, fit checks, and final-frame preservation |
+@@ -280,7 +280,7 @@ Spoken dialogue is preserved verbatim in its natural language while all structur
+ ```text
+ The woman (S1) says in Spanish from Spain: <d>[Spanish] Hola, cariño, ¿quieres un baile privado?</d>.
+ ```
+-Supports 17 canonical languages and 88 regional dialect aliases (Castilian, Québécois, Flemish, Austrian German, Brazilian Portuguese, Cantonese, etc.).
++Supports 22 canonical languages and 93 regional dialect aliases (Castilian, Québécois, Flemish, Austrian German, Brazilian Portuguese, Cantonese, etc.).
+ 
+ ### Cross-Modal Audio Reference Binding
+ Binds audio tracks (`<Audio 1>`, `<Audio 2>`) directly to character identities (`(S1)`, `(S2)`):
+diff --git a/prompt_enhancer.py b/prompt_enhancer.py
+index dee2d76..fd554cd 100644
+--- a/prompt_enhancer.py
++++ b/prompt_enhancer.py
+@@ -279,7 +279,7 @@ def _loaded_instance_id(root: str, model: str, api_key: str, timeout: int) -> st
+ 
+ 
+ def _completion(root: str, model: str, messages: list[dict], api_key: str,
+-                temperature: float, max_tokens: int, timeout: int,
++                temperature: float, max_tokens: int | None, timeout: int,
+                 disable_thinking: bool = True,
+                 prefer_lm_studio_native: bool = True,
+                 on_model_instance_id: Callable[[str], None] | None = None) -> str:
+@@ -295,9 +295,10 @@ def _completion(root: str, model: str, messages: list[dict], api_key: str,
+                 for item in messages if item.get("role") != "system"
+             ),
+             "temperature": float(temperature),
+-            "max_output_tokens": int(max_tokens),
+             "store": False,
+         }
++        if max_tokens is not None and int(max_tokens) > 0:
++            native_payload["max_output_tokens"] = int(max_tokens)
+         try:
+             answer = _request_json(native_root + "/api/v1/chat", native_payload, api_key, timeout)
+         except RuntimeError as exc:
+@@ -317,9 +318,10 @@ def _completion(root: str, model: str, messages: list[dict], api_key: str,
+         "model": model,
+         "messages": messages,
+         "temperature": float(temperature),
+-        "max_tokens": int(max_tokens),
+         "stream": False,
+     }
++    if max_tokens is not None and int(max_tokens) > 0:
++        payload["max_tokens"] = int(max_tokens)
+     response = _request_json(root + "/chat/completions", payload, api_key, timeout)
+     response_instance_id = str(response.get("model_instance_id", response.get("modelInstanceId", ""))).strip()
+     if response_instance_id and on_model_instance_id:
+@@ -929,7 +931,7 @@ def enhance_prompt_with_completion(
+ 
+ def enhance_prompt(basic_prompt: str, mode: str, duration_seconds: float,
+                    reference_context: str, endpoint: str, model: str, api_key: str,
+-                   temperature: float, max_tokens: int, timeout: int,
++                   temperature: float, max_tokens: int | None, timeout: int,
+                    repair_attempts: int, allow_remote_endpoint: bool,
+                    disable_thinking: bool = True,
+                    enhance_description: bool = True,
+@@ -970,6 +972,17 @@ def enhance_prompt(basic_prompt: str, mode: str, duration_seconds: float,
+             on_model_instance_id=record_instance_id
+         )
+ 
++    prompt_engine_manifest = {
++        "provider": "local_chat_api",
++        "endpoint": root,
++        "model": selected_model,
++        "temperature": float(temperature),
++        "thinkingDisabled": bool(disable_thinking),
++        "lmStudioNativePreferred": bool(disable_thinking),
++    }
++    if max_tokens is not None and int(max_tokens) > 0:
++        prompt_engine_manifest["maxTokens"] = int(max_tokens)
++
+     enhanced, validation, result_manifest = enhance_prompt_with_completion(
+         basic_prompt,
+         mode,
+@@ -977,15 +990,7 @@ def enhance_prompt(basic_prompt: str, mode: str, duration_seconds: float,
+         reference_context,
+         complete,
+         repair_attempts,
+-        {
+-            "provider": "local_chat_api",
+-            "endpoint": root,
+-            "model": selected_model,
+-            "temperature": float(temperature),
+-            "maxTokens": int(max_tokens),
+-            "thinkingDisabled": bool(disable_thinking),
+-            "lmStudioNativePreferred": bool(disable_thinking),
+-        },
++        prompt_engine_manifest,
+         enhance_description,
+         ambience_foley_policy,
+         background_score_policy,
+diff --git a/prompt_enhancer_node.py b/prompt_enhancer_node.py
+index 26c978f..06729c1 100644
+--- a/prompt_enhancer_node.py
++++ b/prompt_enhancer_node.py
+@@ -400,8 +400,6 @@ class MiniMaxH3PromptEnhancer:
+             "model": ("STRING", {"default": PROMPT_ENGINE_MODEL_ID, "tooltip": "Fixed autonomous prompt model qwen/qwen3.8-27b; legacy widget values are ignored."}),
+             "api_key": ("STRING", {"default": "", "password": True, "tooltip": API_KEY_TOOLTIP}),
+             "temperature": ("FLOAT", {"default": 0.2, "min": 0.0, "max": 2.0, "step": 0.05}),
+-            # max_tokens is an explicit completion budget; never derive it from context_size.
+-            "max_tokens": ("INT", {"default": 8192, "min": 512, "max": 32768, "step": 256}),
+             "timeout_seconds": ("INT", {"default": 600, "min": 10, "max": 1800, "step": 10}),
+             "repair_attempts": ("INT", {"default": 2, "min": 0, "max": 4, "step": 1}),
+             "disable_thinking": ("BOOLEAN", {"default": True, "tooltip": "Legacy compatibility input; LM Studio reasoning and runtime configuration are not overridden."}),
+@@ -451,6 +449,7 @@ class MiniMaxH3PromptEnhancer:
+              "title_placement": (["after credits", "before credits"], {"default": "after credits"}),
+              # Append-only: ComfyUI stores widget values positionally.
+              "system_prompt_override": ("STRING", {"multiline": True, "default": "", "dynamicPrompts": False, "tooltip": "Blank uses the upstream mode system prompt; populated text is passed verbatim to LM Studio and every bounded repair attempt."}),
++             "max_tokens": ("INT", {"default": 0, "min": 0, "max": 32768, "step": 256, "tooltip": "Optional manual completion limit. Leave 0 to omit the field and let LM Studio manage output length."}),
+          }}
+ 
+     @classmethod
+@@ -469,8 +468,8 @@ class MiniMaxH3PromptEnhancer:
+         return True
+ 
+     def enhance(self, basic_prompt, mode, duration_seconds, reference_context, endpoint, model, api_key,
+-                temperature, max_tokens, timeout_seconds, repair_attempts, disable_thinking,
+-                allow_remote_endpoint, use_remote_model=True, local_model="", llama_server_path="",
++                temperature, max_tokens=None, timeout_seconds=600, repair_attempts=2, disable_thinking=True,
++                allow_remote_endpoint=False, use_remote_model=True, local_model="", llama_server_path="",
+                 gpu_layers="auto", context_size=DEFAULT_LOCAL_CONTEXT_SIZE, threads=0,
+                 startup_timeout=DEFAULT_LOCAL_STARTUP_TIMEOUT,
+                 keep_server_loaded=False, enhance_description=True, ambience_foley_policy="auto",
+@@ -508,9 +507,10 @@ class MiniMaxH3PromptEnhancer:
+                 title_placement, title_duration, aspect_ratio,
+             )
+         if bool(use_remote_model):
++            remote_max_tokens = int(max_tokens) if max_tokens is not None and int(max_tokens) > 0 else None
+             remote_args = (
+                 basic_prompt, mode, duration_seconds, reference_context, endpoint, model, api_key,
+-                temperature, max_tokens, timeout_seconds, repair_attempts, allow_remote_endpoint,
++                temperature, remote_max_tokens, timeout_seconds, repair_attempts, allow_remote_endpoint,
+                 disable_thinking,
+                 enhance_description,
+                 ambience_foley_policy,
+@@ -533,6 +533,8 @@ class MiniMaxH3PromptEnhancer:
+                     *remote_args, invent_scene=invent_scene, lora_trigger_words=lora_trigger_words,
+                     creative_latitude=latitude_name, system_prompt_override=system_prompt_override)
+         else:
++            if max_tokens is None or int(max_tokens) <= 0:
++                raise ValueError("Local GGUF enhancement requires an explicit positive max_tokens value.")
+             context_size, startup_timeout = _local_runtime_limits(context_size, startup_timeout)
+             local_args = (
+                 basic_prompt, mode, duration_seconds, reference_context, llama_server_path, local_model,
+diff --git a/tests/test_creative_direction_compatibility.py b/tests/test_creative_direction_compatibility.py
+index 1143488..0db8460 100644
+--- a/tests/test_creative_direction_compatibility.py
++++ b/tests/test_creative_direction_compatibility.py
+@@ -68,7 +68,7 @@ def _appended_fields(node_class):
+         "lora_trigger_words",
+     ]
+     if node_class is MiniMaxH3PromptEnhancer:
+-        fields.extend(TITLE_FIELDS)
++        fields.extend([*TITLE_FIELDS, "system_prompt_override", "max_tokens"])
+     return fields
+ 
+ 
+@@ -100,6 +100,8 @@ def test_new_serialized_inputs_are_appended_after_every_legacy_node_input():
+     for name, node_class in classes.items():
+         current = _input_names(node_class)
+         legacy = [LEGACY_RENAMES.get(field, field) for field in fixture["nodes"][name]]
++        if node_class is MiniMaxH3PromptEnhancer:
++            legacy.remove("max_tokens")
+         assert current[:len(legacy)] == legacy
+         assert current[len(legacy):] == _appended_fields(node_class)
+ 
+@@ -157,7 +159,7 @@ def test_existing_outputs_keep_their_positions_and_new_outputs_are_appended():
+         "enhanced_prompt", "validation_report", "enhancement_manifest", "duration_seconds", "aspect_ratio",
+         "treatment_warnings", "width", "height",
+     )
+-    assert MiniMaxH3PromptEnhancer.RETURN_NAMES == expected_enhancer_outputs
++    assert MiniMaxH3PromptEnhancer.RETURN_NAMES == (*expected_enhancer_outputs, "llm_model_id", "llm_instance_id")
+     assert MiniMaxH3GGUFPromptEnhancer.RETURN_NAMES == expected_enhancer_outputs
+     assert MiniMaxH3ShotSelector.RETURN_NAMES == (
+         "shot_prompt", "timeline_body", "shot_description", "shot_id", "shot_count", "autonomous",
+@@ -185,6 +187,10 @@ def test_low_level_and_node_signatures_append_only_optional_neutral_fields():
+         # creative_latitude replaced the enhance_description/invent_scene pair. It defaults to
+         # None so an API caller that still passes the old flags keeps its exact behaviour, which
+         # is what this test exists to guarantee.
++        if parameters[-1].name == "system_prompt_override":
++            assert parameters[-1].name == "system_prompt_override"
++            assert parameters[-1].default == ""
++            parameters = parameters[:-1]
+         if callable_ is MiniMaxH3PromptEnhancer.enhance:
+             assert [parameter.name for parameter in parameters[-len(TITLE_FIELDS):]] == TITLE_FIELDS
+             assert [parameter.default for parameter in parameters[-len(TITLE_FIELDS):]] == [
+@@ -251,7 +257,8 @@ def test_legacy_main_node_positional_call_still_reaches_remote_backend(monkeypat
+     )
+     assert result[0] == "prompt"
+     assert captured["args"][-5:] == (True, "auto", "follow_prompt", "audible", "")
+-    assert result[-3:] == ("", 1280, 720)
++    assert result[5:8] == ("", 1280, 720)
++    assert result[-2:] == ("", "")
+ 
+ 
+ def test_legacy_specialized_gguf_node_positional_call_still_reaches_backend(monkeypatch):
+diff --git a/tests/test_delivery_marks_and_verbatim.py b/tests/test_delivery_marks_and_verbatim.py
+index 830eab3..1f5230f 100644
+--- a/tests/test_delivery_marks_and_verbatim.py
++++ b/tests/test_delivery_marks_and_verbatim.py
+@@ -55,6 +55,9 @@ def test_every_backend_accepts_creative_latitude_with_the_same_tail():
+         prompt_enhancer.enhance_prompt_with_completion,
+     ):
+         names = [p.name for p in inspect.signature(function).parameters.values()]
++        if names[-1] == "system_prompt_override":
++            assert names[-1] == "system_prompt_override"
++            names = names[:-1]
+         assert names[-4:] == tail, function.__name__
+ 
+ 
+diff --git a/tests/test_frontend_media_review_node.py b/tests/test_frontend_media_review_node.py
+index ce64d7d..4b90918 100644
+--- a/tests/test_frontend_media_review_node.py
++++ b/tests/test_frontend_media_review_node.py
+@@ -14,9 +14,10 @@ def test_compact_node_keeps_the_canonical_eight_output_contract():
+         "enhanced_prompt", "validation_report", "enhancement_manifest", "duration_seconds",
+         "aspect_ratio", "treatment_warnings", "width", "height",
+     )
+-    for node_class in (MiniMaxH3PromptEnhancer, MiniMaxH3GGUFPromptEnhancer):
+-        assert node_class.RETURN_TYPES == expected_types
+-        assert node_class.RETURN_NAMES == expected_names
++    assert MiniMaxH3GGUFPromptEnhancer.RETURN_TYPES == expected_types
++    assert MiniMaxH3GGUFPromptEnhancer.RETURN_NAMES == expected_names
++    assert MiniMaxH3PromptEnhancer.RETURN_TYPES == (*expected_types, "STRING", "STRING")
++    assert MiniMaxH3PromptEnhancer.RETURN_NAMES == (*expected_names, "llm_model_id", "llm_instance_id")
+ 
+ 
+ def test_node_frontend_groups_controls_without_new_persistent_widgets():
+diff --git a/tests/test_node_diagnostic_ui.py b/tests/test_node_diagnostic_ui.py
+index ecbad3c..6015411 100644
+--- a/tests/test_node_diagnostic_ui.py
++++ b/tests/test_node_diagnostic_ui.py
+@@ -19,7 +19,7 @@ def test_enhancers_use_ui_wrapper_without_changing_direct_enhance_contract():
+             "diagnostics": [{"code": "coach.action.opening_duplicate"}],
+         },
+     }
+-    direct = ("prompt", json.dumps(validation), "{}", 8.0, "16:9", "", 1280, 720)
++    direct = ("prompt", json.dumps(validation), "{}", 8.0, "16:9", "", 1280, 720, "model", "instance")
+     enhancer = MiniMaxH3PromptEnhancer()
+     enhancer.enhance = lambda *args, **kwargs: direct
+ 
+diff --git a/tests/test_prompt_enhancer.py b/tests/test_prompt_enhancer.py
+index c50f5f1..e5f388e 100644
+--- a/tests/test_prompt_enhancer.py
++++ b/tests/test_prompt_enhancer.py
+@@ -2,9 +2,8 @@
+ 
+ from __future__ import annotations
+ 
+-import io
+ import json
+-from urllib.error import HTTPError
++import socket
+ 
+ import pytest
+ 
+@@ -45,23 +44,24 @@ class FakeResponse:
+         return json.dumps(self.payload).encode("utf-8")
+ 
+ 
+-def _http_error(url, code):
+-    return HTTPError(url, code, "failed", {}, io.BytesIO(b"{}"))
++def _transport_payload(payload, status=200):
++    return status, json.dumps(payload).encode("utf-8")
+ 
+ 
+ def _record_completions(monkeypatch, calls, native_error=None):
+     """Run `calls` identical completions and return every requested URL in order."""
+     urls = []
+ 
+-    def fake_urlopen(request, timeout):
+-        urls.append(request.full_url)
+-        if request.full_url.endswith("/api/v1/chat"):
++    def fake_request(url, _body, _headers, connect_timeout, read_timeout):
++        assert connect_timeout <= read_timeout
++        urls.append(url)
++        if url.endswith("/api/v1/chat"):
+             if native_error is not None:
+-                raise _http_error(request.full_url, native_error)
+-            return FakeResponse({"output": [{"type": "message", "content": VALID_PROMPT}]})
+-        return FakeResponse({"choices": [{"message": {"content": VALID_PROMPT}}]})
++                return _transport_payload({}, native_error)
++            return _transport_payload({"output": [{"type": "message", "content": VALID_PROMPT}]})
++        return _transport_payload({"choices": [{"message": {"content": VALID_PROMPT}}]})
+ 
+-    monkeypatch.setattr(prompt_enhancer, "urlopen", fake_urlopen)
++    monkeypatch.setattr(prompt_enhancer, "_direct_http_request", fake_request)
+     for _ in range(calls):
+         assert prompt_enhancer._completion(
+             "http://127.0.0.1:1234/v1", "qwen", MESSAGES, "", 0.1, 500, 30, True,
+@@ -72,45 +72,93 @@ def _record_completions(monkeypatch, calls, native_error=None):
+ def test_enhancer_auto_discovers_model_and_never_puts_api_key_in_manifest(monkeypatch):
+     calls = []
+ 
+-    def fake_urlopen(request, timeout):
+-        calls.append((request, timeout))
+-        if request.full_url.endswith("/models"):
+-            return FakeResponse({"data": [{"id": "local-qwen"}]})
+-        if request.full_url.endswith("/api/v1/chat"):
+-            return FakeResponse({"output": [{"type": "message", "content": VALID_PROMPT}]})
+-        return FakeResponse({"choices": [{"message": {"content": VALID_PROMPT}}]})
+-
+-    monkeypatch.setattr(prompt_enhancer, "urlopen", fake_urlopen)
++    def fake_request(url, _body, _headers, connect_timeout, read_timeout):
++        calls.append((url, connect_timeout, read_timeout))
++        if url.endswith("/api/v1/models"):
++            return _transport_payload({"models": [{
++                "key": prompt_enhancer.PROMPT_ENGINE_MODEL_ID,
++                "loaded_instances": [{"id": "qwen-instance"}],
++            }]})
++        if url.endswith("/models"):
++            return _transport_payload({"data": [{"id": prompt_enhancer.PROMPT_ENGINE_MODEL_ID}]})
++        if url.endswith("/api/v1/chat"):
++            return _transport_payload({
++                "model_instance_id": "qwen-instance",
++                "output": [{"type": "message", "content": VALID_PROMPT}],
++            })
++        return _transport_payload({"choices": [{"message": {"content": VALID_PROMPT}}]})
++
++    monkeypatch.setattr(prompt_enhancer, "_direct_http_request", fake_request)
+     result, validation, manifest = prompt_enhancer.enhance_prompt(
+         "A knight crosses a wet alley. No music.", "t2va", 5.0, "",
+         "http://127.0.0.1:1234/v1", "", "super-secret", 0.2, 4096, 30, 1, False,
+     )
+     assert result == VALID_PROMPT
+     assert validation["valid"]
+-    assert manifest["model"] == "local-qwen"
++    assert manifest["model"] == prompt_enhancer.PROMPT_ENGINE_MODEL_ID
+     assert "super-secret" not in json.dumps(manifest)
+     assert len(calls) == 3
+     assert manifest["repairAttemptsUsed"] == 1
+ 
+ 
+-def test_auto_model_skips_embeddings_and_prefers_compact_instruct_model(monkeypatch):
+-    def fake_urlopen(request, timeout):
+-        if request.full_url.endswith("/models"):
+-            return FakeResponse({"data": [
+-                {"id": "text-embedding-nomic-embed-text-v1.5"},
+-                {"id": "qwen3.6-27b"},
+-                {"id": "gemma-4-e4b-it-ultra-uncensored-heretic-nvfp4"},
+-            ]})
+-        if request.full_url.endswith("/api/v1/chat"):
+-            return FakeResponse({"output": [{"type": "message", "content": VALID_PROMPT}]})
+-        return FakeResponse({"choices": [{"message": {"content": VALID_PROMPT}}]})
+-
+-    monkeypatch.setattr(prompt_enhancer, "urlopen", fake_urlopen)
++def test_autonomous_model_is_fixed_to_the_production_qwen_id(monkeypatch):
++    def fake_request(url, _body, _headers, connect_timeout, read_timeout):
++        if url.endswith("/api/v1/models"):
++            return _transport_payload({"models": [{
++                "key": prompt_enhancer.PROMPT_ENGINE_MODEL_ID,
++                "loaded_instances": [{"id": "qwen-instance"}],
++            }]})
++        if url.endswith("/api/v1/chat"):
++            return _transport_payload({
++                "model_instance_id": "qwen-instance",
++                "output": [{"type": "message", "content": VALID_PROMPT}],
++            })
++        return _transport_payload({"choices": [{"message": {"content": VALID_PROMPT}}]})
++
++    monkeypatch.setattr(prompt_enhancer, "_direct_http_request", fake_request)
+     _result, _validation, manifest = prompt_enhancer.enhance_prompt(
+         "A knight crosses a wet alley. No music.", "t2va", 5.0, "",
+         "http://127.0.0.1:1234/v1", "", "", 0.2, 4096, 30, 0, False,
+     )
+-    assert manifest["model"] == "gemma-4-e4b-it-ultra-uncensored-heretic-nvfp4"
++    assert manifest["modelId"] == prompt_enhancer.PROMPT_ENGINE_MODEL_ID
++
++
++def test_autonomous_native_request_omits_output_token_limit(monkeypatch):
++    payloads = []
++
++    def fake_request(url, body, _headers, connect_timeout, read_timeout):
++        assert connect_timeout == 30
++        assert read_timeout == 600
++        payloads.append((url, json.loads(body)))
++        return _transport_payload({"output": [{"type": "message", "content": VALID_PROMPT}]})
++
++    monkeypatch.setattr(prompt_enhancer, "_direct_http_request", fake_request)
++    assert prompt_enhancer._completion(
++        "http://127.0.0.1:1234/v1", prompt_enhancer.PROMPT_ENGINE_MODEL_ID,
++        MESSAGES, "", 0.2, None, 600,
++    ) == VALID_PROMPT
++    assert payloads[0][0] == NATIVE_URL
++    assert "max_output_tokens" not in payloads[0][1]
++    assert "max_tokens" not in payloads[0][1]
++    assert not ({"context_length", "gpu", "offload", "quantization", "flash_attention", "chat_template", "reasoning"} & payloads[0][1].keys())
++
++
++def test_autonomous_fallback_omits_limit_but_manual_limit_remains_supported(monkeypatch):
++    payloads = []
++
++    def fake_request(url, body, _headers, connect_timeout, read_timeout):
++        payloads.append((url, json.loads(body)))
++        return _transport_payload({"choices": [{"message": {"content": VALID_PROMPT}}]})
++
++    monkeypatch.setattr(prompt_enhancer, "_direct_http_request", fake_request)
++    for limit in (None, 4096):
++        assert prompt_enhancer._completion(
++            "http://127.0.0.1:1234/v1", prompt_enhancer.PROMPT_ENGINE_MODEL_ID,
++            MESSAGES, "", 0.2, limit, 600, prefer_lm_studio_native=False,
++        ) == VALID_PROMPT
++    assert payloads[0][0] == CHAT_URL
++    assert "max_tokens" not in payloads[0][1]
++    assert payloads[1][1]["max_tokens"] == 4096
+ 
+ 
+ def test_remote_endpoint_requires_explicit_opt_in():
+@@ -125,23 +173,28 @@ def test_frontend_model_discovery_filters_models_and_enforces_endpoint_policy(mo
+     monkeypatch.setattr(
+         prompt_enhancer,
+         "_request_json",
+-        lambda *_args, **_kwargs: {"data": [
+-            {"id": "text-embedding-model"},
+-            {"id": "qwen-chat"},
+-            {"id": "reranker"},
+-        ]},
++        lambda *_args, **_kwargs: {"models": [{"key": prompt_enhancer.PROMPT_ENGINE_MODEL_ID}]},
+     )
+-    assert prompt_enhancer.discover_models("http://127.0.0.1:1234/v1") == ["qwen-chat"]
++    assert prompt_enhancer.discover_models("http://127.0.0.1:1234/v1") == [prompt_enhancer.PROMPT_ENGINE_MODEL_ID]
+     with pytest.raises(ValueError, match="Remote LLM endpoints are disabled"):
+         prompt_enhancer.discover_models("https://example.com/v1")
+ 
+ 
+ def test_one_repair_attempt_fixes_invalid_first_completion(monkeypatch):
+-    payloads = iter([
+-        {"output": [{"type": "message", "content": "not structured"}]},
+-        {"output": [{"type": "message", "content": VALID_PROMPT}]},
+-    ])
+-    monkeypatch.setattr(prompt_enhancer, "urlopen", lambda *_args, **_kwargs: FakeResponse(next(payloads)))
++    payloads = iter(("not structured", VALID_PROMPT))
++
++    def fake_request(url, _body, _headers, connect_timeout, read_timeout):
++        if url.endswith("/api/v1/models"):
++            return _transport_payload({"models": [{
++                "key": prompt_enhancer.PROMPT_ENGINE_MODEL_ID,
++                "loaded_instances": [{"id": "qwen-instance"}],
++            }]})
++        return _transport_payload({
++            "model_instance_id": "qwen-instance",
++            "output": [{"type": "message", "content": next(payloads)}],
++        })
++
++    monkeypatch.setattr(prompt_enhancer, "_direct_http_request", fake_request)
+     _result, validation, manifest = prompt_enhancer.enhance_prompt(
+         "A knight crosses a wet alley. No music.", "t2va", 5.0, "",
+         "http://localhost:8000/v1", "already-loaded", "", 0.2, 4096, 30, 1, False,
+@@ -150,6 +203,60 @@ def test_one_repair_attempt_fixes_invalid_first_completion(monkeypatch):
+     assert manifest["repairAttemptsUsed"] == 1
+ 
+ 
++def test_simulated_121_second_rewrite_and_repair_share_600_second_read_timeout(monkeypatch):
++    """Use a fake clock/transport contract; this test never sleeps."""
++    simulated_durations = iter((121, 121))
++    responses = iter(("not structured", VALID_PROMPT))
++    observed_read_timeouts = []
++
++    def fake_request(_url, _body, _headers, connect_timeout, read_timeout):
++        elapsed = next(simulated_durations)
++        observed_read_timeouts.append(read_timeout)
++        if elapsed > read_timeout:
++            raise socket.timeout(f"simulated {elapsed}-second response")
++        return _transport_payload({"choices": [{"message": {"content": next(responses)}}]})
++
++    monkeypatch.setattr(prompt_enhancer, "_direct_http_request", fake_request)
++
++    def complete(messages):
++        return prompt_enhancer._completion(
++            "http://127.0.0.1:1234/v1", "qwen", messages, "", 0.2, None, 600,
++            prefer_lm_studio_native=False,
++        )
++
++    result, validation, manifest = prompt_enhancer.enhance_prompt_with_completion(
++        "A knight crosses a wet alley. No music.", "t2va", 5.0, "", complete, 1,
++        {"provider": "test"},
++    )
++    assert result == VALID_PROMPT
++    assert validation["valid"]
++    assert manifest["repairAttemptsUsed"] == 1
++    assert "maxTokens" not in manifest
++    assert observed_read_timeouts == [600, 600]
++
++
++def test_context_size_does_not_derive_an_output_limit():
++    result, validation, manifest = prompt_enhancer.enhance_prompt_with_completion(
++        "A knight crosses a wet alley. No music.", "t2va", 5.0, "",
++        lambda _messages: VALID_PROMPT, 0, {"provider": "test", "contextSize": 1},
++    )
++    assert result == VALID_PROMPT
++    assert validation["valid"]
++    assert "maxTokens" not in manifest
++
++
++def test_simulated_response_over_600_seconds_times_out_without_sleeping(monkeypatch):
++    def fake_request(_url, _body, _headers, connect_timeout, read_timeout):
++        simulated_elapsed = 601
++        if simulated_elapsed > read_timeout:
++            raise socket.timeout(f"simulated {simulated_elapsed}-second response")
++        raise AssertionError("the simulated response should have exceeded its read timeout")
++
++    monkeypatch.setattr(prompt_enhancer, "_direct_http_request", fake_request)
++    with pytest.raises(RuntimeError, match="timed out after 600 seconds"):
++        prompt_enhancer._request_json(CHAT_URL, {"messages": MESSAGES}, "", 600)
++
++
+ def test_repair_loop_keeps_the_best_candidate_when_repair_is_worse():
+     first = """integrated_multimodal_description:
+ [Shot 1] A middle-aged woman monitors a laboratory console.
+@@ -187,20 +294,20 @@ def test_api_v2_delivery_target_repairs_an_oversized_candidate():
+     assert manifest["repairAttemptsUsed"] == 1
+ 
+ 
+-def test_native_lm_studio_request_turns_reasoning_off(monkeypatch):
++def test_native_lm_studio_request_does_not_override_reasoning_settings(monkeypatch):
+     captured = {}
+ 
+-    def fake_urlopen(request, timeout):
+-        captured.update(json.loads(request.data.decode("utf-8")))
+-        return FakeResponse({"output": [{"type": "message", "content": VALID_PROMPT}]})
++    def fake_request(_url, body, _headers, connect_timeout, read_timeout):
++        captured.update(json.loads(body.decode("utf-8")))
++        return _transport_payload({"output": [{"type": "message", "content": VALID_PROMPT}]})
+ 
+-    monkeypatch.setattr(prompt_enhancer, "urlopen", fake_urlopen)
++    monkeypatch.setattr(prompt_enhancer, "_direct_http_request", fake_request)
+     result = prompt_enhancer._completion(
+         "http://127.0.0.1:1234/v1", "qwen", [{"role": "system", "content": "rules"},
+         {"role": "user", "content": "request"}], "", 0.1, 500, 30, True,
+     )
+     assert result == VALID_PROMPT
+-    assert captured["reasoning"] == "off"
++    assert "reasoning" not in captured
+     assert captured["store"] is False
+ 
+ 
+@@ -412,8 +519,8 @@ def test_a_server_exposing_the_native_endpoint_keeps_using_it(monkeypatch):
+ def test_an_authentication_failure_does_not_mark_the_root_as_non_native(monkeypatch):
+     # 401/403/407 answer the credential question, not the endpoint-shape question, so the root
+     # is probed again on the next call instead of being remembered as OpenAI-compatible only.
+-    urls = _record_completions(monkeypatch, 2, native_error=401)
+-    assert urls == [NATIVE_URL, CHAT_URL, NATIVE_URL, CHAT_URL]
++    with pytest.raises(RuntimeError, match="HTTP 401"):
++        _record_completions(monkeypatch, 1, native_error=401)
+ 
+ 
+ def test_a_native_root_that_stops_answering_falls_back_and_stops_being_probed(monkeypatch):
+diff --git a/tests/test_prompt_enhancer_node.py b/tests/test_prompt_enhancer_node.py
+index 88c3261..c4108b3 100644
+--- a/tests/test_prompt_enhancer_node.py
++++ b/tests/test_prompt_enhancer_node.py
+@@ -227,13 +227,15 @@ def test_always_re_enhance_is_appended_last_to_keep_saved_widget_order():
+         optional = node.INPUT_TYPES()["optional"]
+         expected_tail = ["always_re_enhance", "delivery_target", "dialogue_language", "visual_style_preset", "target_megapixels", "editing_intent", "lora_trigger_words"]
+         if node is MiniMaxH3PromptEnhancer:
+-            expected_tail += ["title_sequence_recipe", "title_sequence_energy", "title_text", "credit_lines", "title_placement", "system_prompt_override"]
++            expected_tail += ["title_sequence_recipe", "title_sequence_energy", "title_text", "credit_lines", "title_placement", "system_prompt_override", "max_tokens"]
+         assert list(optional)[-len(expected_tail):] == expected_tail
+         assert optional["always_re_enhance"][0] == "BOOLEAN"
+         assert optional["always_re_enhance"][1]["default"] is False
+         assert optional["editing_intent"][0] == list(prompt_enhancer_node.EDITING_INTENT_CHOICES)
+         assert optional["editing_intent"][1]["default"] == "none"
+     assert "always_re_enhance" not in MiniMaxH3PromptEnhancer.INPUT_TYPES()["required"]
++    assert "max_tokens" not in MiniMaxH3PromptEnhancer.INPUT_TYPES()["required"]
++    assert MiniMaxH3PromptEnhancer.INPUT_TYPES()["optional"]["max_tokens"][1]["default"] == 0
+ 
+ 
+ def test_api_key_widget_documents_the_environment_variable_fallback():

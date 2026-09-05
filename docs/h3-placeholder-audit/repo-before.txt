@@ -1,0 +1,325 @@
+docs\h3-remote-autonomous-generation.md:216:omits `max_tokens`, the native LM Studio request omits `max_output_tokens`, and
+docs\h3-remote-autonomous-generation.md:217:the OpenAI-compatible fallback omits `max_tokens`. No limit is derived from
+patches\ComfyUI-MiniMax-H3-Prompt-Enhancer\0001-proya-autonomous-h3.patch:171:                 temperature: float, max_tokens: int, timeout: int,
+patches\ComfyUI-MiniMax-H3-Prompt-Enhancer\0001-proya-autonomous-h3.patch:183:             "max_output_tokens": int(max_tokens),
+patches\ComfyUI-MiniMax-H3-Prompt-Enhancer\0001-proya-autonomous-h3.patch:200:         "max_tokens": int(max_tokens),
+patches\ComfyUI-MiniMax-H3-Prompt-Enhancer\0001-proya-autonomous-h3.patch:263:-            root, selected_model, messages, secret, temperature, max_tokens, timeout, disable_thinking
+patches\ComfyUI-MiniMax-H3-Prompt-Enhancer\0001-proya-autonomous-h3.patch:264:+            root, selected_model, messages, secret, temperature, max_tokens, timeout, disable_thinking,
+patches\ComfyUI-MiniMax-H3-Prompt-Enhancer\0001-proya-autonomous-h3.patch:340:-            "max_tokens": ("INT", {"default": 8192, "min": 512, "max": 32768, "step": 256}),
+patches\ComfyUI-MiniMax-H3-Prompt-Enhancer\0001-proya-autonomous-h3.patch:342:+            # max_tokens is an explicit completion budget; never derive it from context_size.
+patches\ComfyUI-MiniMax-H3-Prompt-Enhancer\0001-proya-autonomous-h3.patch:343:+            "max_tokens": ("INT", {"default": 8192, "min": 512, "max": 32768, "step": 256}),
+release-build-check-4\win-unpacked\resources\workflows\minimax-h3-api.json:317:      "max_tokens": "{{H3_MAX_TOKENS}}",
+electron\main\compute-provider.test.ts:180:    expect(tokenOwnershipPatchText).toContain('native_payload["max_output_tokens"] = int(max_tokens)');
+electron\main\compute-provider.test.ts:181:    expect(tokenOwnershipPatchText).toContain('payload["max_tokens"] = int(max_tokens)');
+electron\main\compute-provider.test.ts:182:    expect(tokenOwnershipPatchText).toContain('remote_max_tokens');
+electron\main\compute-provider.test.ts:183:    expect(tokenOwnershipPatchText).toContain('"max_tokens": ("INT", {"default": 0');
+electron\main\compute-provider.test.ts:393:    expect(enhancer.inputs).not.toHaveProperty('max_tokens');
+release-build-check-8\win-unpacked\resources\workflows\minimax-h3-api.json:317:      "max_tokens": "{{H3_MAX_TOKENS}}",
+release-build-check-7\win-unpacked\resources\workflows\minimax-h3-api.json:317:      "max_tokens": "{{H3_MAX_TOKENS}}",
+patches\ComfyUI-MiniMax-H3-Prompt-Enhancer\0003-proya-lmstudio-managed-output-tokens.patch:31:-                temperature: float, max_tokens: int, timeout: int,
+patches\ComfyUI-MiniMax-H3-Prompt-Enhancer\0003-proya-lmstudio-managed-output-tokens.patch:32:+                temperature: float, max_tokens: int | None, timeout: int,
+patches\ComfyUI-MiniMax-H3-Prompt-Enhancer\0003-proya-lmstudio-managed-output-tokens.patch:40:-            "max_output_tokens": int(max_tokens),
+patches\ComfyUI-MiniMax-H3-Prompt-Enhancer\0003-proya-lmstudio-managed-output-tokens.patch:43:+        if max_tokens is not None and int(max_tokens) > 0:
+patches\ComfyUI-MiniMax-H3-Prompt-Enhancer\0003-proya-lmstudio-managed-output-tokens.patch:44:+            native_payload["max_output_tokens"] = int(max_tokens)
+patches\ComfyUI-MiniMax-H3-Prompt-Enhancer\0003-proya-lmstudio-managed-output-tokens.patch:52:-        "max_tokens": int(max_tokens),
+patches\ComfyUI-MiniMax-H3-Prompt-Enhancer\0003-proya-lmstudio-managed-output-tokens.patch:55:+    if max_tokens is not None and int(max_tokens) > 0:
+patches\ComfyUI-MiniMax-H3-Prompt-Enhancer\0003-proya-lmstudio-managed-output-tokens.patch:56:+        payload["max_tokens"] = int(max_tokens)
+patches\ComfyUI-MiniMax-H3-Prompt-Enhancer\0003-proya-lmstudio-managed-output-tokens.patch:64:-                   temperature: float, max_tokens: int, timeout: int,
+patches\ComfyUI-MiniMax-H3-Prompt-Enhancer\0003-proya-lmstudio-managed-output-tokens.patch:65:+                   temperature: float, max_tokens: int | None, timeout: int,
+patches\ComfyUI-MiniMax-H3-Prompt-Enhancer\0003-proya-lmstudio-managed-output-tokens.patch:81:+    if max_tokens is not None and int(max_tokens) > 0:
+patches\ComfyUI-MiniMax-H3-Prompt-Enhancer\0003-proya-lmstudio-managed-output-tokens.patch:82:+        prompt_engine_manifest["maxTokens"] = int(max_tokens)
+patches\ComfyUI-MiniMax-H3-Prompt-Enhancer\0003-proya-lmstudio-managed-output-tokens.patch:96:-            "maxTokens": int(max_tokens),
+patches\ComfyUI-MiniMax-H3-Prompt-Enhancer\0003-proya-lmstudio-managed-output-tokens.patch:112:-            # max_tokens is an explicit completion budget; never derive it from context_size.
+patches\ComfyUI-MiniMax-H3-Prompt-Enhancer\0003-proya-lmstudio-managed-output-tokens.patch:113:-            "max_tokens": ("INT", {"default": 8192, "min": 512, "max": 32768, "step": 256}),
+patches\ComfyUI-MiniMax-H3-Prompt-Enhancer\0003-proya-lmstudio-managed-output-tokens.patch:121:+             "max_tokens": ("INT", {"default": 0, "min": 0, "max": 32768, "step": 256, "tooltip": "Optional manual completion limit. Leave 0 to omit the field and let LM Studio manage output length."}),
+patches\ComfyUI-MiniMax-H3-Prompt-Enhancer\0003-proya-lmstudio-managed-output-tokens.patch:129:-                temperature, max_tokens, timeout_seconds, repair_attempts, disable_thinking,
+patches\ComfyUI-MiniMax-H3-Prompt-Enhancer\0003-proya-lmstudio-managed-output-tokens.patch:131:+                temperature, max_tokens=None, timeout_seconds=600, repair_attempts=2, disable_thinking=True,
+patches\ComfyUI-MiniMax-H3-Prompt-Enhancer\0003-proya-lmstudio-managed-output-tokens.patch:140:+            remote_max_tokens = int(max_tokens) if max_tokens is not None and int(max_tokens) > 0 else None
+patches\ComfyUI-MiniMax-H3-Prompt-Enhancer\0003-proya-lmstudio-managed-output-tokens.patch:143:-                temperature, max_tokens, timeout_seconds, repair_attempts, allow_remote_endpoint,
+patches\ComfyUI-MiniMax-H3-Prompt-Enhancer\0003-proya-lmstudio-managed-output-tokens.patch:144:+                temperature, remote_max_tokens, timeout_seconds, repair_attempts, allow_remote_endpoint,
+patches\ComfyUI-MiniMax-H3-Prompt-Enhancer\0003-proya-lmstudio-managed-output-tokens.patch:152:+            if max_tokens is None or int(max_tokens) <= 0:
+patches\ComfyUI-MiniMax-H3-Prompt-Enhancer\0003-proya-lmstudio-managed-output-tokens.patch:153:+                raise ValueError("Local GGUF enhancement requires an explicit positive max_tokens value.")
+patches\ComfyUI-MiniMax-H3-Prompt-Enhancer\0003-proya-lmstudio-managed-output-tokens.patch:166:+        fields.extend([*TITLE_FIELDS, "system_prompt_override", "max_tokens"])
+patches\ComfyUI-MiniMax-H3-Prompt-Enhancer\0003-proya-lmstudio-managed-output-tokens.patch:175:+            legacy.remove("max_tokens")
+patches\ComfyUI-MiniMax-H3-Prompt-Enhancer\0003-proya-lmstudio-managed-output-tokens.patch:398:+    assert "max_tokens" not in payloads[0][1]
+patches\ComfyUI-MiniMax-H3-Prompt-Enhancer\0003-proya-lmstudio-managed-output-tokens.patch:416:+    assert "max_tokens" not in payloads[0][1]
+patches\ComfyUI-MiniMax-H3-Prompt-Enhancer\0003-proya-lmstudio-managed-output-tokens.patch:417:+    assert payloads[1][1]["max_tokens"] == 4096
+patches\ComfyUI-MiniMax-H3-Prompt-Enhancer\0003-proya-lmstudio-managed-output-tokens.patch:493:+    assert "maxTokens" not in manifest
+patches\ComfyUI-MiniMax-H3-Prompt-Enhancer\0003-proya-lmstudio-managed-output-tokens.patch:504:+    assert "maxTokens" not in manifest
+patches\ComfyUI-MiniMax-H3-Prompt-Enhancer\0003-proya-lmstudio-managed-output-tokens.patch:569:+            expected_tail += ["title_sequence_recipe", "title_sequence_energy", "title_text", "credit_lines", "title_placement", "system_prompt_override", "max_tokens"]
+patches\ComfyUI-MiniMax-H3-Prompt-Enhancer\0003-proya-lmstudio-managed-output-tokens.patch:576:+    assert "max_tokens" not in MiniMaxH3PromptEnhancer.INPUT_TYPES()["required"]
+patches\ComfyUI-MiniMax-H3-Prompt-Enhancer\0003-proya-lmstudio-managed-output-tokens.patch:577:+    assert MiniMaxH3PromptEnhancer.INPUT_TYPES()["optional"]["max_tokens"][1]["default"] == 0
+deploy\patch-check-lmstudio-managed-20260904-1815\node\README.md:452:contract, so `max_tokens` now defaults to 8192 — if a saved workflow still carries a 16384 context
+src\domain\settings.test.ts:22:    expect(defaults.h3PromptEngine).not.toHaveProperty('maxTokens');
+src\domain\settings.test.ts:87:    expect(mergeSettings(defaults, { h3PromptEngine: { ...defaults.h3PromptEngine, maxTokens: 16128 } }).h3PromptEngine).not.toHaveProperty('maxTokens');
+src\domain\settings.test.ts:88:    expect(mergeSettings(defaults, { h3PromptEngine: { ...defaults.h3PromptEngine, maxTokens: 4096 } }).h3PromptEngine).not.toHaveProperty('maxTokens');
+release-build-check-6\win-unpacked\resources\workflows\minimax-h3-api.json:317:      "max_tokens": "{{H3_MAX_TOKENS}}",
+src\domain\comfy-workflow.test.ts:97:    expect(workflow['149'].inputs).not.toHaveProperty('max_tokens');
+src\domain\comfy-workflow.test.ts:98:    expect(JSON.stringify(workflow)).not.toContain('H3_MAX_TOKENS');
+deploy\patch-check-lmstudio-managed-20260904-1815\node\prompt_enhancer_node.py:452:             "max_tokens": ("INT", {"default": 0, "min": 0, "max": 32768, "step": 256, "tooltip": "Optional manual completion limit. Leave 0 to omit the field and let LM Studio manage output length."}),
+deploy\patch-check-lmstudio-managed-20260904-1815\node\prompt_enhancer_node.py:471:                temperature, max_tokens=None, timeout_seconds=600, repair_attempts=2, disable_thinking=True,
+deploy\patch-check-lmstudio-managed-20260904-1815\node\prompt_enhancer_node.py:510:            remote_max_tokens = int(max_tokens) if max_tokens is not None and int(max_tokens) > 0 else None
+deploy\patch-check-lmstudio-managed-20260904-1815\node\prompt_enhancer_node.py:513:                temperature, remote_max_tokens, timeout_seconds, repair_attempts, allow_remote_endpoint,
+deploy\patch-check-lmstudio-managed-20260904-1815\node\prompt_enhancer_node.py:536:            if max_tokens is None or int(max_tokens) <= 0:
+deploy\patch-check-lmstudio-managed-20260904-1815\node\prompt_enhancer_node.py:537:                raise ValueError("Local GGUF enhancement requires an explicit positive max_tokens value.")
+deploy\patch-check-lmstudio-managed-20260904-1815\node\prompt_enhancer_node.py:541:                "", gpu_layers, context_size, threads, temperature, max_tokens, timeout_seconds,
+deploy\patch-check-lmstudio-managed-20260904-1815\node\prompt_enhancer_node.py:638:            "max_tokens": ("INT", {"default": 8192, "min": 512, "max": 32768, "step": 256}),
+deploy\patch-check-lmstudio-managed-20260904-1815\node\prompt_enhancer_node.py:685:                max_tokens, request_timeout, startup_timeout, repair_attempts, disable_thinking,
+deploy\patch-check-lmstudio-managed-20260904-1815\node\prompt_enhancer_node.py:706:            registered_model_dirs, gpu_layers, context_size, threads, temperature, max_tokens,
+deploy\patch-check-lmstudio-managed-20260904-1815\node\prompt_enhancer.py:282:                temperature: float, max_tokens: int | None, timeout: int,
+deploy\patch-check-lmstudio-managed-20260904-1815\node\prompt_enhancer.py:300:        if max_tokens is not None and int(max_tokens) > 0:
+deploy\patch-check-lmstudio-managed-20260904-1815\node\prompt_enhancer.py:301:            native_payload["max_output_tokens"] = int(max_tokens)
+deploy\patch-check-lmstudio-managed-20260904-1815\node\prompt_enhancer.py:323:    if max_tokens is not None and int(max_tokens) > 0:
+deploy\patch-check-lmstudio-managed-20260904-1815\node\prompt_enhancer.py:324:        payload["max_tokens"] = int(max_tokens)
+deploy\patch-check-lmstudio-managed-20260904-1815\node\prompt_enhancer.py:621:    max_output_tokens = int(manifest.get("maxTokens") or 0)
+deploy\patch-check-lmstudio-managed-20260904-1815\node\prompt_enhancer.py:628:                f"plus max_tokens={max_output_tokens}"
+deploy\patch-check-lmstudio-managed-20260904-1815\node\prompt_enhancer.py:934:                   temperature: float, max_tokens: int | None, timeout: int,
+deploy\patch-check-lmstudio-managed-20260904-1815\node\prompt_enhancer.py:971:            root, selected_model, messages, secret, temperature, max_tokens, timeout, disable_thinking,
+deploy\patch-check-lmstudio-managed-20260904-1815\node\prompt_enhancer.py:983:    if max_tokens is not None and int(max_tokens) > 0:
+deploy\patch-check-lmstudio-managed-20260904-1815\node\prompt_enhancer.py:984:        prompt_engine_manifest["maxTokens"] = int(max_tokens)
+deploy\patch-check-lmstudio-managed-20260904-1815\node\gguf_server.py:350:    max_tokens: int,
+deploy\patch-check-lmstudio-managed-20260904-1815\node\gguf_server.py:436:                    max_tokens,
+deploy\patch-check-lmstudio-managed-20260904-1815\node\gguf_server.py:458:                    "maxTokens": int(max_tokens),
+deploy\patch-check-lmstudio-managed-20260904-1815\node\web\backend_toggle.js:3069:        ["max_tokens", "Maximum output tokens"],
+deploy\patch-check-lmstudio-managed-20260904-1815\node\web\backend_toggle.js:3722:    sanitizeIntegerWidget(node, "max_tokens", 4096, 512, 32768);
+deploy\patch-check-lmstudio-managed-20260904-1815\node\tests\fixtures\legacy_node_inputs_v050.json:14:      "max_tokens",
+deploy\patch-check-lmstudio-managed-20260904-1815\node\tests\fixtures\legacy_node_inputs_v050.json:53:      "max_tokens",
+deploy\patch-check-lmstudio-managed-20260904-1815\node\tests\test_creative_direction_compatibility.py:71:        fields.extend([*TITLE_FIELDS, "system_prompt_override", "max_tokens"])
+deploy\patch-check-lmstudio-managed-20260904-1815\node\tests\test_creative_direction_compatibility.py:104:            legacy.remove("max_tokens")
+release-build-check-5\win-unpacked\resources\workflows\minimax-h3-api.json:317:      "max_tokens": "{{H3_MAX_TOKENS}}",
+deploy\patch-check-lmstudio-managed-20260904-1815\node\tests\test_prompt_enhancer_node.py:128:        max_tokens=4096,
+deploy\patch-check-lmstudio-managed-20260904-1815\node\tests\test_prompt_enhancer_node.py:230:            expected_tail += ["title_sequence_recipe", "title_sequence_energy", "title_text", "credit_lines", "title_placement", "system_prompt_override", "max_tokens"]
+deploy\patch-check-lmstudio-managed-20260904-1815\node\tests\test_prompt_enhancer_node.py:237:    assert "max_tokens" not in MiniMaxH3PromptEnhancer.INPUT_TYPES()["required"]
+deploy\patch-check-lmstudio-managed-20260904-1815\node\tests\test_prompt_enhancer_node.py:238:    assert MiniMaxH3PromptEnhancer.INPUT_TYPES()["optional"]["max_tokens"][1]["default"] == 0
+deploy\patch-check-lmstudio-managed-20260904-1815\node\tests\test_prompt_enhancer.py:142:    assert "max_tokens" not in payloads[0][1]
+deploy\patch-check-lmstudio-managed-20260904-1815\node\tests\test_prompt_enhancer.py:160:    assert "max_tokens" not in payloads[0][1]
+deploy\patch-check-lmstudio-managed-20260904-1815\node\tests\test_prompt_enhancer.py:161:    assert payloads[1][1]["max_tokens"] == 4096
+deploy\patch-check-lmstudio-managed-20260904-1815\node\tests\test_prompt_enhancer.py:234:    assert "maxTokens" not in manifest
+deploy\patch-check-lmstudio-managed-20260904-1815\node\tests\test_prompt_enhancer.py:245:    assert "maxTokens" not in manifest
+deploy\china-final-token-managed-20260904-180809\ComfyUI-MiniMax-H3-Prompt-Enhancer\gguf_server.py:350:    max_tokens: int,
+deploy\china-final-token-managed-20260904-180809\ComfyUI-MiniMax-H3-Prompt-Enhancer\gguf_server.py:436:                    max_tokens,
+deploy\china-final-token-managed-20260904-180809\ComfyUI-MiniMax-H3-Prompt-Enhancer\gguf_server.py:458:                    "maxTokens": int(max_tokens),
+release\win-unpacked\resources\workflows\minimax-h3-api.json:317:      "max_tokens": "{{H3_MAX_TOKENS}}",
+deploy\china-final-token-managed-20260904-180809\ComfyUI-MiniMax-H3-Prompt-Enhancer\tests\test_creative_direction_compatibility.py:71:        fields.extend([*TITLE_FIELDS, "system_prompt_override", "max_tokens"])
+deploy\china-final-token-managed-20260904-180809\ComfyUI-MiniMax-H3-Prompt-Enhancer\tests\test_creative_direction_compatibility.py:104:            legacy.remove("max_tokens")
+deploy\china-final-token-managed-20260904-180809\ComfyUI-MiniMax-H3-Prompt-Enhancer\tests\fixtures\legacy_node_inputs_v050.json:14:      "max_tokens",
+deploy\china-final-token-managed-20260904-180809\ComfyUI-MiniMax-H3-Prompt-Enhancer\tests\fixtures\legacy_node_inputs_v050.json:53:      "max_tokens",
+deploy\china-final-staging-20260904-1620\ComfyUI-MiniMax-H3-Prompt-Enhancer\PROYA-patches\0001-proya-autonomous-h3.patch:171:                 temperature: float, max_tokens: int, timeout: int,
+deploy\china-final-staging-20260904-1620\ComfyUI-MiniMax-H3-Prompt-Enhancer\PROYA-patches\0001-proya-autonomous-h3.patch:183:             "max_output_tokens": int(max_tokens),
+deploy\china-final-staging-20260904-1620\ComfyUI-MiniMax-H3-Prompt-Enhancer\PROYA-patches\0001-proya-autonomous-h3.patch:200:         "max_tokens": int(max_tokens),
+deploy\china-final-staging-20260904-1620\ComfyUI-MiniMax-H3-Prompt-Enhancer\PROYA-patches\0001-proya-autonomous-h3.patch:263:-            root, selected_model, messages, secret, temperature, max_tokens, timeout, disable_thinking
+deploy\china-final-staging-20260904-1620\ComfyUI-MiniMax-H3-Prompt-Enhancer\PROYA-patches\0001-proya-autonomous-h3.patch:264:+            root, selected_model, messages, secret, temperature, max_tokens, timeout, disable_thinking,
+deploy\china-final-staging-20260904-1620\ComfyUI-MiniMax-H3-Prompt-Enhancer\PROYA-patches\0001-proya-autonomous-h3.patch:340:-            "max_tokens": ("INT", {"default": 8192, "min": 512, "max": 32768, "step": 256}),
+deploy\china-final-staging-20260904-1620\ComfyUI-MiniMax-H3-Prompt-Enhancer\PROYA-patches\0001-proya-autonomous-h3.patch:342:+            # max_tokens is an explicit completion budget; never derive it from context_size.
+deploy\china-final-staging-20260904-1620\ComfyUI-MiniMax-H3-Prompt-Enhancer\PROYA-patches\0001-proya-autonomous-h3.patch:343:+            "max_tokens": ("INT", {"default": 8192, "min": 512, "max": 32768, "step": 256}),
+deploy\china-final-token-managed-20260904-180809\ComfyUI-MiniMax-H3-Prompt-Enhancer\README.md:452:contract, so `max_tokens` now defaults to 8192 — if a saved workflow still carries a 16384 context
+deploy\china-final-token-managed-20260904-180809\ComfyUI-MiniMax-H3-Prompt-Enhancer\tests\test_prompt_enhancer_node.py:128:        max_tokens=4096,
+deploy\china-final-token-managed-20260904-180809\ComfyUI-MiniMax-H3-Prompt-Enhancer\tests\test_prompt_enhancer_node.py:230:            expected_tail += ["title_sequence_recipe", "title_sequence_energy", "title_text", "credit_lines", "title_placement", "system_prompt_override", "max_tokens"]
+deploy\china-final-token-managed-20260904-180809\ComfyUI-MiniMax-H3-Prompt-Enhancer\tests\test_prompt_enhancer_node.py:237:    assert "max_tokens" not in MiniMaxH3PromptEnhancer.INPUT_TYPES()["required"]
+deploy\china-final-token-managed-20260904-180809\ComfyUI-MiniMax-H3-Prompt-Enhancer\tests\test_prompt_enhancer_node.py:238:    assert MiniMaxH3PromptEnhancer.INPUT_TYPES()["optional"]["max_tokens"][1]["default"] == 0
+deploy\china-final-token-managed-20260904-180809\ComfyUI-MiniMax-H3-Prompt-Enhancer\tests\test_prompt_enhancer.py:142:    assert "max_tokens" not in payloads[0][1]
+deploy\china-final-token-managed-20260904-180809\ComfyUI-MiniMax-H3-Prompt-Enhancer\tests\test_prompt_enhancer.py:160:    assert "max_tokens" not in payloads[0][1]
+deploy\china-final-token-managed-20260904-180809\ComfyUI-MiniMax-H3-Prompt-Enhancer\tests\test_prompt_enhancer.py:161:    assert payloads[1][1]["max_tokens"] == 4096
+deploy\china-final-token-managed-20260904-180809\ComfyUI-MiniMax-H3-Prompt-Enhancer\tests\test_prompt_enhancer.py:234:    assert "maxTokens" not in manifest
+deploy\china-final-token-managed-20260904-180809\ComfyUI-MiniMax-H3-Prompt-Enhancer\tests\test_prompt_enhancer.py:245:    assert "maxTokens" not in manifest
+deploy\china-final-staging-20260904-1620\ComfyUI-MiniMax-H3-Prompt-Enhancer\prompt_enhancer_node.py:403:            # max_tokens is an explicit completion budget; never derive it from context_size.
+deploy\china-final-staging-20260904-1620\ComfyUI-MiniMax-H3-Prompt-Enhancer\prompt_enhancer_node.py:404:            "max_tokens": ("INT", {"default": 8192, "min": 512, "max": 32768, "step": 256}),
+deploy\china-final-staging-20260904-1620\ComfyUI-MiniMax-H3-Prompt-Enhancer\prompt_enhancer_node.py:472:                temperature, max_tokens, timeout_seconds, repair_attempts, disable_thinking,
+deploy\china-final-staging-20260904-1620\ComfyUI-MiniMax-H3-Prompt-Enhancer\prompt_enhancer_node.py:513:                temperature, max_tokens, timeout_seconds, repair_attempts, allow_remote_endpoint,
+deploy\china-final-staging-20260904-1620\ComfyUI-MiniMax-H3-Prompt-Enhancer\prompt_enhancer_node.py:539:                "", gpu_layers, context_size, threads, temperature, max_tokens, timeout_seconds,
+deploy\china-final-staging-20260904-1620\ComfyUI-MiniMax-H3-Prompt-Enhancer\prompt_enhancer_node.py:636:            "max_tokens": ("INT", {"default": 8192, "min": 512, "max": 32768, "step": 256}),
+deploy\china-final-staging-20260904-1620\ComfyUI-MiniMax-H3-Prompt-Enhancer\prompt_enhancer_node.py:683:                max_tokens, request_timeout, startup_timeout, repair_attempts, disable_thinking,
+deploy\china-final-staging-20260904-1620\ComfyUI-MiniMax-H3-Prompt-Enhancer\prompt_enhancer_node.py:704:            registered_model_dirs, gpu_layers, context_size, threads, temperature, max_tokens,
+deploy\china-final-staging-20260904-1620\ComfyUI-MiniMax-H3-Prompt-Enhancer\prompt_enhancer.py:282:                temperature: float, max_tokens: int, timeout: int,
+deploy\china-final-staging-20260904-1620\ComfyUI-MiniMax-H3-Prompt-Enhancer\prompt_enhancer.py:298:            "max_output_tokens": int(max_tokens),
+deploy\china-final-staging-20260904-1620\ComfyUI-MiniMax-H3-Prompt-Enhancer\prompt_enhancer.py:320:        "max_tokens": int(max_tokens),
+deploy\china-final-staging-20260904-1620\ComfyUI-MiniMax-H3-Prompt-Enhancer\prompt_enhancer.py:619:    max_output_tokens = int(manifest.get("maxTokens") or 0)
+deploy\china-final-staging-20260904-1620\ComfyUI-MiniMax-H3-Prompt-Enhancer\prompt_enhancer.py:626:                f"plus max_tokens={max_output_tokens}"
+deploy\china-final-staging-20260904-1620\ComfyUI-MiniMax-H3-Prompt-Enhancer\prompt_enhancer.py:932:                   temperature: float, max_tokens: int, timeout: int,
+deploy\china-final-staging-20260904-1620\ComfyUI-MiniMax-H3-Prompt-Enhancer\prompt_enhancer.py:969:            root, selected_model, messages, secret, temperature, max_tokens, timeout, disable_thinking,
+deploy\china-final-staging-20260904-1620\ComfyUI-MiniMax-H3-Prompt-Enhancer\prompt_enhancer.py:985:            "maxTokens": int(max_tokens),
+deploy\china-final-token-managed-20260904-180809\ComfyUI-MiniMax-H3-Prompt-Enhancer\PROYA-patches\0003-proya-lmstudio-managed-output-tokens.patch:31:-                temperature: float, max_tokens: int, timeout: int,
+deploy\china-final-token-managed-20260904-180809\ComfyUI-MiniMax-H3-Prompt-Enhancer\PROYA-patches\0003-proya-lmstudio-managed-output-tokens.patch:32:+                temperature: float, max_tokens: int | None, timeout: int,
+deploy\china-final-token-managed-20260904-180809\ComfyUI-MiniMax-H3-Prompt-Enhancer\PROYA-patches\0003-proya-lmstudio-managed-output-tokens.patch:40:-            "max_output_tokens": int(max_tokens),
+deploy\china-final-token-managed-20260904-180809\ComfyUI-MiniMax-H3-Prompt-Enhancer\PROYA-patches\0003-proya-lmstudio-managed-output-tokens.patch:43:+        if max_tokens is not None and int(max_tokens) > 0:
+deploy\china-final-token-managed-20260904-180809\ComfyUI-MiniMax-H3-Prompt-Enhancer\PROYA-patches\0003-proya-lmstudio-managed-output-tokens.patch:44:+            native_payload["max_output_tokens"] = int(max_tokens)
+deploy\china-final-token-managed-20260904-180809\ComfyUI-MiniMax-H3-Prompt-Enhancer\PROYA-patches\0003-proya-lmstudio-managed-output-tokens.patch:52:-        "max_tokens": int(max_tokens),
+deploy\china-final-token-managed-20260904-180809\ComfyUI-MiniMax-H3-Prompt-Enhancer\PROYA-patches\0003-proya-lmstudio-managed-output-tokens.patch:55:+    if max_tokens is not None and int(max_tokens) > 0:
+deploy\china-final-token-managed-20260904-180809\ComfyUI-MiniMax-H3-Prompt-Enhancer\PROYA-patches\0003-proya-lmstudio-managed-output-tokens.patch:56:+        payload["max_tokens"] = int(max_tokens)
+deploy\china-final-token-managed-20260904-180809\ComfyUI-MiniMax-H3-Prompt-Enhancer\PROYA-patches\0003-proya-lmstudio-managed-output-tokens.patch:64:-                   temperature: float, max_tokens: int, timeout: int,
+deploy\china-final-token-managed-20260904-180809\ComfyUI-MiniMax-H3-Prompt-Enhancer\PROYA-patches\0003-proya-lmstudio-managed-output-tokens.patch:65:+                   temperature: float, max_tokens: int | None, timeout: int,
+deploy\china-final-token-managed-20260904-180809\ComfyUI-MiniMax-H3-Prompt-Enhancer\PROYA-patches\0003-proya-lmstudio-managed-output-tokens.patch:81:+    if max_tokens is not None and int(max_tokens) > 0:
+deploy\china-final-token-managed-20260904-180809\ComfyUI-MiniMax-H3-Prompt-Enhancer\PROYA-patches\0003-proya-lmstudio-managed-output-tokens.patch:82:+        prompt_engine_manifest["maxTokens"] = int(max_tokens)
+deploy\china-final-token-managed-20260904-180809\ComfyUI-MiniMax-H3-Prompt-Enhancer\PROYA-patches\0003-proya-lmstudio-managed-output-tokens.patch:96:-            "maxTokens": int(max_tokens),
+deploy\china-final-token-managed-20260904-180809\ComfyUI-MiniMax-H3-Prompt-Enhancer\PROYA-patches\0003-proya-lmstudio-managed-output-tokens.patch:112:-            # max_tokens is an explicit completion budget; never derive it from context_size.
+deploy\china-final-token-managed-20260904-180809\ComfyUI-MiniMax-H3-Prompt-Enhancer\PROYA-patches\0003-proya-lmstudio-managed-output-tokens.patch:113:-            "max_tokens": ("INT", {"default": 8192, "min": 512, "max": 32768, "step": 256}),
+deploy\china-final-token-managed-20260904-180809\ComfyUI-MiniMax-H3-Prompt-Enhancer\PROYA-patches\0003-proya-lmstudio-managed-output-tokens.patch:121:+             "max_tokens": ("INT", {"default": 0, "min": 0, "max": 32768, "step": 256, "tooltip": "Optional manual completion limit. Leave 0 to omit the field and let LM Studio manage output length."}),
+deploy\china-final-token-managed-20260904-180809\ComfyUI-MiniMax-H3-Prompt-Enhancer\PROYA-patches\0003-proya-lmstudio-managed-output-tokens.patch:129:-                temperature, max_tokens, timeout_seconds, repair_attempts, disable_thinking,
+deploy\china-final-token-managed-20260904-180809\ComfyUI-MiniMax-H3-Prompt-Enhancer\PROYA-patches\0003-proya-lmstudio-managed-output-tokens.patch:131:+                temperature, max_tokens=None, timeout_seconds=600, repair_attempts=2, disable_thinking=True,
+deploy\china-final-token-managed-20260904-180809\ComfyUI-MiniMax-H3-Prompt-Enhancer\PROYA-patches\0003-proya-lmstudio-managed-output-tokens.patch:140:+            remote_max_tokens = int(max_tokens) if max_tokens is not None and int(max_tokens) > 0 else None
+deploy\china-final-token-managed-20260904-180809\ComfyUI-MiniMax-H3-Prompt-Enhancer\PROYA-patches\0003-proya-lmstudio-managed-output-tokens.patch:143:-                temperature, max_tokens, timeout_seconds, repair_attempts, allow_remote_endpoint,
+deploy\china-final-token-managed-20260904-180809\ComfyUI-MiniMax-H3-Prompt-Enhancer\PROYA-patches\0003-proya-lmstudio-managed-output-tokens.patch:144:+                temperature, remote_max_tokens, timeout_seconds, repair_attempts, allow_remote_endpoint,
+deploy\china-final-token-managed-20260904-180809\ComfyUI-MiniMax-H3-Prompt-Enhancer\PROYA-patches\0003-proya-lmstudio-managed-output-tokens.patch:152:+            if max_tokens is None or int(max_tokens) <= 0:
+deploy\china-final-token-managed-20260904-180809\ComfyUI-MiniMax-H3-Prompt-Enhancer\PROYA-patches\0003-proya-lmstudio-managed-output-tokens.patch:153:+                raise ValueError("Local GGUF enhancement requires an explicit positive max_tokens value.")
+deploy\china-final-token-managed-20260904-180809\ComfyUI-MiniMax-H3-Prompt-Enhancer\PROYA-patches\0003-proya-lmstudio-managed-output-tokens.patch:166:+        fields.extend([*TITLE_FIELDS, "system_prompt_override", "max_tokens"])
+deploy\china-final-token-managed-20260904-180809\ComfyUI-MiniMax-H3-Prompt-Enhancer\PROYA-patches\0003-proya-lmstudio-managed-output-tokens.patch:175:+            legacy.remove("max_tokens")
+deploy\china-final-token-managed-20260904-180809\ComfyUI-MiniMax-H3-Prompt-Enhancer\PROYA-patches\0003-proya-lmstudio-managed-output-tokens.patch:398:+    assert "max_tokens" not in payloads[0][1]
+deploy\china-final-token-managed-20260904-180809\ComfyUI-MiniMax-H3-Prompt-Enhancer\PROYA-patches\0003-proya-lmstudio-managed-output-tokens.patch:416:+    assert "max_tokens" not in payloads[0][1]
+deploy\china-final-token-managed-20260904-180809\ComfyUI-MiniMax-H3-Prompt-Enhancer\PROYA-patches\0003-proya-lmstudio-managed-output-tokens.patch:417:+    assert payloads[1][1]["max_tokens"] == 4096
+deploy\china-final-token-managed-20260904-180809\ComfyUI-MiniMax-H3-Prompt-Enhancer\PROYA-patches\0003-proya-lmstudio-managed-output-tokens.patch:493:+    assert "maxTokens" not in manifest
+deploy\china-final-token-managed-20260904-180809\ComfyUI-MiniMax-H3-Prompt-Enhancer\PROYA-patches\0003-proya-lmstudio-managed-output-tokens.patch:504:+    assert "maxTokens" not in manifest
+deploy\china-final-token-managed-20260904-180809\ComfyUI-MiniMax-H3-Prompt-Enhancer\PROYA-patches\0003-proya-lmstudio-managed-output-tokens.patch:569:+            expected_tail += ["title_sequence_recipe", "title_sequence_energy", "title_text", "credit_lines", "title_placement", "system_prompt_override", "max_tokens"]
+deploy\china-final-token-managed-20260904-180809\ComfyUI-MiniMax-H3-Prompt-Enhancer\PROYA-patches\0003-proya-lmstudio-managed-output-tokens.patch:576:+    assert "max_tokens" not in MiniMaxH3PromptEnhancer.INPUT_TYPES()["required"]
+deploy\china-final-token-managed-20260904-180809\ComfyUI-MiniMax-H3-Prompt-Enhancer\PROYA-patches\0003-proya-lmstudio-managed-output-tokens.patch:577:+    assert MiniMaxH3PromptEnhancer.INPUT_TYPES()["optional"]["max_tokens"][1]["default"] == 0
+deploy\china-final-staging-20260904-1620\ComfyUI-MiniMax-H3-Prompt-Enhancer\gguf_server.py:350:    max_tokens: int,
+deploy\china-final-staging-20260904-1620\ComfyUI-MiniMax-H3-Prompt-Enhancer\gguf_server.py:436:                    max_tokens,
+deploy\china-final-staging-20260904-1620\ComfyUI-MiniMax-H3-Prompt-Enhancer\gguf_server.py:458:                    "maxTokens": int(max_tokens),
+deploy\china-final-token-managed-20260904-180809\ComfyUI-MiniMax-H3-Prompt-Enhancer\PROYA-patches\0001-proya-autonomous-h3.patch:171:                 temperature: float, max_tokens: int, timeout: int,
+deploy\china-final-token-managed-20260904-180809\ComfyUI-MiniMax-H3-Prompt-Enhancer\PROYA-patches\0001-proya-autonomous-h3.patch:183:             "max_output_tokens": int(max_tokens),
+deploy\china-final-token-managed-20260904-180809\ComfyUI-MiniMax-H3-Prompt-Enhancer\PROYA-patches\0001-proya-autonomous-h3.patch:200:         "max_tokens": int(max_tokens),
+deploy\china-final-token-managed-20260904-180809\ComfyUI-MiniMax-H3-Prompt-Enhancer\PROYA-patches\0001-proya-autonomous-h3.patch:263:-            root, selected_model, messages, secret, temperature, max_tokens, timeout, disable_thinking
+deploy\china-final-token-managed-20260904-180809\ComfyUI-MiniMax-H3-Prompt-Enhancer\PROYA-patches\0001-proya-autonomous-h3.patch:264:+            root, selected_model, messages, secret, temperature, max_tokens, timeout, disable_thinking,
+deploy\china-final-token-managed-20260904-180809\ComfyUI-MiniMax-H3-Prompt-Enhancer\PROYA-patches\0001-proya-autonomous-h3.patch:340:-            "max_tokens": ("INT", {"default": 8192, "min": 512, "max": 32768, "step": 256}),
+deploy\china-final-token-managed-20260904-180809\ComfyUI-MiniMax-H3-Prompt-Enhancer\PROYA-patches\0001-proya-autonomous-h3.patch:342:+            # max_tokens is an explicit completion budget; never derive it from context_size.
+deploy\china-final-token-managed-20260904-180809\ComfyUI-MiniMax-H3-Prompt-Enhancer\PROYA-patches\0001-proya-autonomous-h3.patch:343:+            "max_tokens": ("INT", {"default": 8192, "min": 512, "max": 32768, "step": 256}),
+deploy\china-final-staging-20260904-1620\ComfyUI-MiniMax-H3-Prompt-Enhancer\web\backend_toggle.js:3069:        ["max_tokens", "Maximum output tokens"],
+deploy\china-final-staging-20260904-1620\ComfyUI-MiniMax-H3-Prompt-Enhancer\web\backend_toggle.js:3722:    sanitizeIntegerWidget(node, "max_tokens", 4096, 512, 32768);
+deploy\china-final-token-managed-20260904-180809\ComfyUI-MiniMax-H3-Prompt-Enhancer\prompt_enhancer_node.py:452:             "max_tokens": ("INT", {"default": 0, "min": 0, "max": 32768, "step": 256, "tooltip": "Optional manual completion limit. Leave 0 to omit the field and let LM Studio manage output length."}),
+deploy\china-final-token-managed-20260904-180809\ComfyUI-MiniMax-H3-Prompt-Enhancer\prompt_enhancer_node.py:471:                temperature, max_tokens=None, timeout_seconds=600, repair_attempts=2, disable_thinking=True,
+deploy\china-final-token-managed-20260904-180809\ComfyUI-MiniMax-H3-Prompt-Enhancer\prompt_enhancer_node.py:510:            remote_max_tokens = int(max_tokens) if max_tokens is not None and int(max_tokens) > 0 else None
+deploy\china-final-token-managed-20260904-180809\ComfyUI-MiniMax-H3-Prompt-Enhancer\prompt_enhancer_node.py:513:                temperature, remote_max_tokens, timeout_seconds, repair_attempts, allow_remote_endpoint,
+deploy\china-final-token-managed-20260904-180809\ComfyUI-MiniMax-H3-Prompt-Enhancer\prompt_enhancer_node.py:536:            if max_tokens is None or int(max_tokens) <= 0:
+deploy\china-final-token-managed-20260904-180809\ComfyUI-MiniMax-H3-Prompt-Enhancer\prompt_enhancer_node.py:537:                raise ValueError("Local GGUF enhancement requires an explicit positive max_tokens value.")
+deploy\china-final-token-managed-20260904-180809\ComfyUI-MiniMax-H3-Prompt-Enhancer\prompt_enhancer_node.py:541:                "", gpu_layers, context_size, threads, temperature, max_tokens, timeout_seconds,
+deploy\china-final-token-managed-20260904-180809\ComfyUI-MiniMax-H3-Prompt-Enhancer\prompt_enhancer_node.py:638:            "max_tokens": ("INT", {"default": 8192, "min": 512, "max": 32768, "step": 256}),
+deploy\china-final-token-managed-20260904-180809\ComfyUI-MiniMax-H3-Prompt-Enhancer\prompt_enhancer_node.py:685:                max_tokens, request_timeout, startup_timeout, repair_attempts, disable_thinking,
+deploy\china-final-token-managed-20260904-180809\ComfyUI-MiniMax-H3-Prompt-Enhancer\prompt_enhancer_node.py:706:            registered_model_dirs, gpu_layers, context_size, threads, temperature, max_tokens,
+deploy\china-final-token-managed-20260904-180809\ComfyUI-MiniMax-H3-Prompt-Enhancer\web\backend_toggle.js:3069:        ["max_tokens", "Maximum output tokens"],
+deploy\china-final-token-managed-20260904-180809\ComfyUI-MiniMax-H3-Prompt-Enhancer\web\backend_toggle.js:3722:    sanitizeIntegerWidget(node, "max_tokens", 4096, 512, 32768);
+deploy\china-final-token-managed-20260904-180809\ComfyUI-MiniMax-H3-Prompt-Enhancer\prompt_enhancer.py:282:                temperature: float, max_tokens: int | None, timeout: int,
+deploy\china-final-token-managed-20260904-180809\ComfyUI-MiniMax-H3-Prompt-Enhancer\prompt_enhancer.py:300:        if max_tokens is not None and int(max_tokens) > 0:
+deploy\china-final-token-managed-20260904-180809\ComfyUI-MiniMax-H3-Prompt-Enhancer\prompt_enhancer.py:301:            native_payload["max_output_tokens"] = int(max_tokens)
+deploy\china-final-token-managed-20260904-180809\ComfyUI-MiniMax-H3-Prompt-Enhancer\prompt_enhancer.py:323:    if max_tokens is not None and int(max_tokens) > 0:
+deploy\china-final-token-managed-20260904-180809\ComfyUI-MiniMax-H3-Prompt-Enhancer\prompt_enhancer.py:324:        payload["max_tokens"] = int(max_tokens)
+deploy\china-final-token-managed-20260904-180809\ComfyUI-MiniMax-H3-Prompt-Enhancer\prompt_enhancer.py:621:    max_output_tokens = int(manifest.get("maxTokens") or 0)
+deploy\china-final-token-managed-20260904-180809\ComfyUI-MiniMax-H3-Prompt-Enhancer\prompt_enhancer.py:628:                f"plus max_tokens={max_output_tokens}"
+deploy\china-final-token-managed-20260904-180809\ComfyUI-MiniMax-H3-Prompt-Enhancer\prompt_enhancer.py:934:                   temperature: float, max_tokens: int | None, timeout: int,
+deploy\china-final-token-managed-20260904-180809\ComfyUI-MiniMax-H3-Prompt-Enhancer\prompt_enhancer.py:971:            root, selected_model, messages, secret, temperature, max_tokens, timeout, disable_thinking,
+deploy\china-final-token-managed-20260904-180809\ComfyUI-MiniMax-H3-Prompt-Enhancer\prompt_enhancer.py:983:    if max_tokens is not None and int(max_tokens) > 0:
+deploy\china-final-token-managed-20260904-180809\ComfyUI-MiniMax-H3-Prompt-Enhancer\prompt_enhancer.py:984:        prompt_engine_manifest["maxTokens"] = int(max_tokens)
+deploy\ComfyUI-MiniMax-H3-Prompt-Enhancer\gguf_server.py:350:    max_tokens: int,
+deploy\ComfyUI-MiniMax-H3-Prompt-Enhancer\gguf_server.py:436:                    max_tokens,
+deploy\ComfyUI-MiniMax-H3-Prompt-Enhancer\gguf_server.py:458:                    "maxTokens": int(max_tokens),
+deploy\ComfyUI-MiniMax-H3-Prompt-Enhancer\README.md:452:contract, so `max_tokens` now defaults to 8192 — if a saved workflow still carries a 16384 context
+deploy\china-final-staging-20260904-1620\ComfyUI-MiniMax-H3-Prompt-Enhancer\tests\test_prompt_enhancer_node.py:128:        max_tokens=4096,
+deploy\ComfyUI-MiniMax-H3-Prompt-Enhancer\prompt_enhancer.py:282:                temperature: float, max_tokens: int | None, timeout: int,
+deploy\ComfyUI-MiniMax-H3-Prompt-Enhancer\prompt_enhancer.py:300:        if max_tokens is not None and int(max_tokens) > 0:
+deploy\ComfyUI-MiniMax-H3-Prompt-Enhancer\prompt_enhancer.py:301:            native_payload["max_output_tokens"] = int(max_tokens)
+deploy\ComfyUI-MiniMax-H3-Prompt-Enhancer\prompt_enhancer.py:323:    if max_tokens is not None and int(max_tokens) > 0:
+deploy\ComfyUI-MiniMax-H3-Prompt-Enhancer\prompt_enhancer.py:324:        payload["max_tokens"] = int(max_tokens)
+deploy\ComfyUI-MiniMax-H3-Prompt-Enhancer\prompt_enhancer.py:621:    max_output_tokens = int(manifest.get("maxTokens") or 0)
+deploy\ComfyUI-MiniMax-H3-Prompt-Enhancer\prompt_enhancer.py:628:                f"plus max_tokens={max_output_tokens}"
+deploy\ComfyUI-MiniMax-H3-Prompt-Enhancer\prompt_enhancer.py:934:                   temperature: float, max_tokens: int | None, timeout: int,
+deploy\ComfyUI-MiniMax-H3-Prompt-Enhancer\prompt_enhancer.py:971:            root, selected_model, messages, secret, temperature, max_tokens, timeout, disable_thinking,
+deploy\ComfyUI-MiniMax-H3-Prompt-Enhancer\prompt_enhancer.py:983:    if max_tokens is not None and int(max_tokens) > 0:
+deploy\ComfyUI-MiniMax-H3-Prompt-Enhancer\prompt_enhancer.py:984:        prompt_engine_manifest["maxTokens"] = int(max_tokens)
+deploy\ComfyUI-MiniMax-H3-Prompt-Enhancer\web\backend_toggle.js:3069:        ["max_tokens", "Maximum output tokens"],
+deploy\ComfyUI-MiniMax-H3-Prompt-Enhancer\web\backend_toggle.js:3722:    sanitizeIntegerWidget(node, "max_tokens", 4096, 512, 32768);
+deploy\ComfyUI-MiniMax-H3-Prompt-Enhancer\prompt_enhancer_node.py:452:             "max_tokens": ("INT", {"default": 0, "min": 0, "max": 32768, "step": 256, "tooltip": "Optional manual completion limit. Leave 0 to omit the field and let LM Studio manage output length."}),
+deploy\ComfyUI-MiniMax-H3-Prompt-Enhancer\prompt_enhancer_node.py:471:                temperature, max_tokens=None, timeout_seconds=600, repair_attempts=2, disable_thinking=True,
+deploy\ComfyUI-MiniMax-H3-Prompt-Enhancer\prompt_enhancer_node.py:487:                 title_placement="after credits", system_prompt_override="", max_tokens=0):
+deploy\ComfyUI-MiniMax-H3-Prompt-Enhancer\prompt_enhancer_node.py:510:            remote_max_tokens = int(max_tokens) if max_tokens is not None and int(max_tokens) > 0 else None
+deploy\ComfyUI-MiniMax-H3-Prompt-Enhancer\prompt_enhancer_node.py:513:                temperature, remote_max_tokens, timeout_seconds, repair_attempts, allow_remote_endpoint,
+deploy\ComfyUI-MiniMax-H3-Prompt-Enhancer\prompt_enhancer_node.py:536:            if max_tokens is None or int(max_tokens) <= 0:
+deploy\ComfyUI-MiniMax-H3-Prompt-Enhancer\prompt_enhancer_node.py:537:                raise ValueError("Local GGUF enhancement requires an explicit positive max_tokens value.")
+deploy\ComfyUI-MiniMax-H3-Prompt-Enhancer\prompt_enhancer_node.py:541:                "", gpu_layers, context_size, threads, temperature, max_tokens, timeout_seconds,
+deploy\ComfyUI-MiniMax-H3-Prompt-Enhancer\prompt_enhancer_node.py:638:            "max_tokens": ("INT", {"default": 8192, "min": 512, "max": 32768, "step": 256}),
+deploy\ComfyUI-MiniMax-H3-Prompt-Enhancer\prompt_enhancer_node.py:685:                max_tokens, request_timeout, startup_timeout, repair_attempts, disable_thinking,
+deploy\ComfyUI-MiniMax-H3-Prompt-Enhancer\prompt_enhancer_node.py:706:            registered_model_dirs, gpu_layers, context_size, threads, temperature, max_tokens,
+deploy\china-final-staging-20260904-1620\ComfyUI-MiniMax-H3-Prompt-Enhancer\tests\fixtures\legacy_node_inputs_v050.json:14:      "max_tokens",
+deploy\china-final-staging-20260904-1620\ComfyUI-MiniMax-H3-Prompt-Enhancer\tests\fixtures\legacy_node_inputs_v050.json:53:      "max_tokens",
+deploy\china-final-staging-20260904-1620\ComfyUI-MiniMax-H3-Prompt-Enhancer\README.md:452:contract, so `max_tokens` now defaults to 8192 — if a saved workflow still carries a 16384 context
+deploy\china-package-staging-20260904\ComfyUI-MiniMax-H3-Prompt-Enhancer\README.md:452:contract, so `max_tokens` now defaults to 8192 — if a saved workflow still carries a 16384 context
+deploy\china-package-staging-20260904\ComfyUI-MiniMax-H3-Prompt-Enhancer\prompt_enhancer_node.py:403:            # max_tokens is an explicit completion budget; never derive it from context_size.
+deploy\china-package-staging-20260904\ComfyUI-MiniMax-H3-Prompt-Enhancer\prompt_enhancer_node.py:404:            "max_tokens": ("INT", {"default": 8192, "min": 512, "max": 32768, "step": 256}),
+deploy\china-package-staging-20260904\ComfyUI-MiniMax-H3-Prompt-Enhancer\prompt_enhancer_node.py:472:                temperature, max_tokens, timeout_seconds, repair_attempts, disable_thinking,
+deploy\china-package-staging-20260904\ComfyUI-MiniMax-H3-Prompt-Enhancer\prompt_enhancer_node.py:513:                temperature, max_tokens, timeout_seconds, repair_attempts, allow_remote_endpoint,
+deploy\china-package-staging-20260904\ComfyUI-MiniMax-H3-Prompt-Enhancer\prompt_enhancer_node.py:539:                "", gpu_layers, context_size, threads, temperature, max_tokens, timeout_seconds,
+deploy\china-package-staging-20260904\ComfyUI-MiniMax-H3-Prompt-Enhancer\prompt_enhancer_node.py:636:            "max_tokens": ("INT", {"default": 8192, "min": 512, "max": 32768, "step": 256}),
+deploy\china-package-staging-20260904\ComfyUI-MiniMax-H3-Prompt-Enhancer\prompt_enhancer_node.py:683:                max_tokens, request_timeout, startup_timeout, repair_attempts, disable_thinking,
+deploy\china-package-staging-20260904\ComfyUI-MiniMax-H3-Prompt-Enhancer\prompt_enhancer_node.py:704:            registered_model_dirs, gpu_layers, context_size, threads, temperature, max_tokens,
+deploy\china-package-staging-20260904\ComfyUI-MiniMax-H3-Prompt-Enhancer\gguf_server.py:350:    max_tokens: int,
+deploy\china-package-staging-20260904\ComfyUI-MiniMax-H3-Prompt-Enhancer\gguf_server.py:436:                    max_tokens,
+deploy\china-package-staging-20260904\ComfyUI-MiniMax-H3-Prompt-Enhancer\gguf_server.py:458:                    "maxTokens": int(max_tokens),
+deploy\china-package-staging-20260904\ComfyUI-MiniMax-H3-Prompt-Enhancer\prompt_enhancer.py:282:                temperature: float, max_tokens: int, timeout: int,
+deploy\china-package-staging-20260904\ComfyUI-MiniMax-H3-Prompt-Enhancer\prompt_enhancer.py:298:            "max_output_tokens": int(max_tokens),
+deploy\china-package-staging-20260904\ComfyUI-MiniMax-H3-Prompt-Enhancer\prompt_enhancer.py:318:        "max_tokens": int(max_tokens),
+deploy\china-package-staging-20260904\ComfyUI-MiniMax-H3-Prompt-Enhancer\prompt_enhancer.py:617:    max_output_tokens = int(manifest.get("maxTokens") or 0)
+deploy\china-package-staging-20260904\ComfyUI-MiniMax-H3-Prompt-Enhancer\prompt_enhancer.py:624:                f"plus max_tokens={max_output_tokens}"
+deploy\china-package-staging-20260904\ComfyUI-MiniMax-H3-Prompt-Enhancer\prompt_enhancer.py:930:                   temperature: float, max_tokens: int, timeout: int,
+deploy\china-package-staging-20260904\ComfyUI-MiniMax-H3-Prompt-Enhancer\prompt_enhancer.py:967:            root, selected_model, messages, secret, temperature, max_tokens, timeout, disable_thinking,
+deploy\china-package-staging-20260904\ComfyUI-MiniMax-H3-Prompt-Enhancer\prompt_enhancer.py:983:            "maxTokens": int(max_tokens),
+deploy\china-package-staging-20260904\ComfyUI-MiniMax-H3-Prompt-Enhancer\tests\fixtures\legacy_node_inputs_v050.json:14:      "max_tokens",
+deploy\china-package-staging-20260904\ComfyUI-MiniMax-H3-Prompt-Enhancer\tests\fixtures\legacy_node_inputs_v050.json:53:      "max_tokens",
+deploy\ComfyUI-MiniMax-H3-Prompt-Enhancer\tests\test_prompt_enhancer_node.py:128:        max_tokens=4096,
+deploy\ComfyUI-MiniMax-H3-Prompt-Enhancer\tests\test_prompt_enhancer_node.py:230:            expected_tail += ["title_sequence_recipe", "title_sequence_energy", "title_text", "credit_lines", "title_placement", "system_prompt_override", "max_tokens"]
+deploy\ComfyUI-MiniMax-H3-Prompt-Enhancer\tests\test_prompt_enhancer_node.py:237:    assert "max_tokens" not in MiniMaxH3PromptEnhancer.INPUT_TYPES()["required"]
+deploy\ComfyUI-MiniMax-H3-Prompt-Enhancer\tests\test_prompt_enhancer_node.py:238:    assert MiniMaxH3PromptEnhancer.INPUT_TYPES()["optional"]["max_tokens"][1]["default"] == 0
+deploy\ComfyUI-MiniMax-H3-Prompt-Enhancer\tests\test_prompt_enhancer.py:142:    assert "max_tokens" not in payloads[0][1]
+deploy\ComfyUI-MiniMax-H3-Prompt-Enhancer\tests\test_prompt_enhancer.py:160:    assert "max_tokens" not in payloads[0][1]
+deploy\ComfyUI-MiniMax-H3-Prompt-Enhancer\tests\test_prompt_enhancer.py:161:    assert payloads[1][1]["max_tokens"] == 4096
+deploy\ComfyUI-MiniMax-H3-Prompt-Enhancer\tests\test_prompt_enhancer.py:234:    assert "maxTokens" not in manifest
+deploy\ComfyUI-MiniMax-H3-Prompt-Enhancer\tests\test_prompt_enhancer.py:245:    assert "maxTokens" not in manifest
+deploy\china-package-staging-20260904\ComfyUI-MiniMax-H3-Prompt-Enhancer\tests\test_prompt_enhancer_node.py:128:        max_tokens=4096,
+release\h3-vram-handoff\canary\observed-job-history.json:426:            "max_tokens": 8192,
+deploy\china-package-staging-20260904\ComfyUI-MiniMax-H3-Prompt-Enhancer\web\backend_toggle.js:3069:        ["max_tokens", "Maximum output tokens"],
+deploy\china-package-staging-20260904\ComfyUI-MiniMax-H3-Prompt-Enhancer\web\backend_toggle.js:3722:    sanitizeIntegerWidget(node, "max_tokens", 4096, 512, 32768);
+deploy\china-lmstudio-managed-staging-20260904-175549\ComfyUI-MiniMax-H3-Prompt-Enhancer\README.md:452:contract, so `max_tokens` now defaults to 8192 — if a saved workflow still carries a 16384 context
+deploy\ComfyUI-MiniMax-H3-Prompt-Enhancer\tests\fixtures\legacy_node_inputs_v050.json:14:      "max_tokens",
+deploy\ComfyUI-MiniMax-H3-Prompt-Enhancer\tests\fixtures\legacy_node_inputs_v050.json:53:      "max_tokens",
+deploy\china-lmstudio-managed-staging-20260904-175549\ComfyUI-MiniMax-H3-Prompt-Enhancer\gguf_server.py:350:    max_tokens: int,
+deploy\china-lmstudio-managed-staging-20260904-175549\ComfyUI-MiniMax-H3-Prompt-Enhancer\gguf_server.py:436:                    max_tokens,
+deploy\china-lmstudio-managed-staging-20260904-175549\ComfyUI-MiniMax-H3-Prompt-Enhancer\gguf_server.py:458:                    "maxTokens": int(max_tokens),
+deploy\china-lmstudio-managed-staging-20260904-175549\ComfyUI-MiniMax-H3-Prompt-Enhancer\prompt_enhancer.py:282:                temperature: float, max_tokens: int | None, timeout: int,
+deploy\china-lmstudio-managed-staging-20260904-175549\ComfyUI-MiniMax-H3-Prompt-Enhancer\prompt_enhancer.py:300:        if max_tokens is not None and int(max_tokens) > 0:
+deploy\china-lmstudio-managed-staging-20260904-175549\ComfyUI-MiniMax-H3-Prompt-Enhancer\prompt_enhancer.py:301:            native_payload["max_output_tokens"] = int(max_tokens)
+deploy\china-lmstudio-managed-staging-20260904-175549\ComfyUI-MiniMax-H3-Prompt-Enhancer\prompt_enhancer.py:323:    if max_tokens is not None and int(max_tokens) > 0:
+deploy\china-lmstudio-managed-staging-20260904-175549\ComfyUI-MiniMax-H3-Prompt-Enhancer\prompt_enhancer.py:324:        payload["max_tokens"] = int(max_tokens)
+deploy\china-lmstudio-managed-staging-20260904-175549\ComfyUI-MiniMax-H3-Prompt-Enhancer\prompt_enhancer.py:621:    max_output_tokens = int(manifest.get("maxTokens") or 0)
+deploy\china-lmstudio-managed-staging-20260904-175549\ComfyUI-MiniMax-H3-Prompt-Enhancer\prompt_enhancer.py:628:                f"plus max_tokens={max_output_tokens}"
+deploy\china-lmstudio-managed-staging-20260904-175549\ComfyUI-MiniMax-H3-Prompt-Enhancer\prompt_enhancer.py:934:                   temperature: float, max_tokens: int | None, timeout: int,
+deploy\china-lmstudio-managed-staging-20260904-175549\ComfyUI-MiniMax-H3-Prompt-Enhancer\prompt_enhancer.py:971:            root, selected_model, messages, secret, temperature, max_tokens, timeout, disable_thinking,
+deploy\china-lmstudio-managed-staging-20260904-175549\ComfyUI-MiniMax-H3-Prompt-Enhancer\prompt_enhancer.py:983:    if max_tokens is not None and int(max_tokens) > 0:
+deploy\china-lmstudio-managed-staging-20260904-175549\ComfyUI-MiniMax-H3-Prompt-Enhancer\prompt_enhancer.py:984:        prompt_engine_manifest["maxTokens"] = int(max_tokens)
+deploy\china-lmstudio-managed-staging-20260904-175549\ComfyUI-MiniMax-H3-Prompt-Enhancer\prompt_enhancer_node.py:452:             "max_tokens": ("INT", {"default": 0, "min": 0, "max": 32768, "step": 256, "tooltip": "Optional manual completion limit. Leave 0 to omit the field and let LM Studio manage output length."}),
+deploy\china-lmstudio-managed-staging-20260904-175549\ComfyUI-MiniMax-H3-Prompt-Enhancer\prompt_enhancer_node.py:471:                temperature, max_tokens=None, timeout_seconds=600, repair_attempts=2, disable_thinking=True,
+deploy\china-lmstudio-managed-staging-20260904-175549\ComfyUI-MiniMax-H3-Prompt-Enhancer\prompt_enhancer_node.py:510:            remote_max_tokens = int(max_tokens) if max_tokens is not None and int(max_tokens) > 0 else None
+deploy\china-lmstudio-managed-staging-20260904-175549\ComfyUI-MiniMax-H3-Prompt-Enhancer\prompt_enhancer_node.py:513:                temperature, remote_max_tokens, timeout_seconds, repair_attempts, allow_remote_endpoint,
+deploy\china-lmstudio-managed-staging-20260904-175549\ComfyUI-MiniMax-H3-Prompt-Enhancer\prompt_enhancer_node.py:536:            if max_tokens is None or int(max_tokens) <= 0:
+deploy\china-lmstudio-managed-staging-20260904-175549\ComfyUI-MiniMax-H3-Prompt-Enhancer\prompt_enhancer_node.py:537:                raise ValueError("Local GGUF enhancement requires an explicit positive max_tokens value.")
+deploy\china-lmstudio-managed-staging-20260904-175549\ComfyUI-MiniMax-H3-Prompt-Enhancer\prompt_enhancer_node.py:541:                "", gpu_layers, context_size, threads, temperature, max_tokens, timeout_seconds,
+deploy\china-lmstudio-managed-staging-20260904-175549\ComfyUI-MiniMax-H3-Prompt-Enhancer\prompt_enhancer_node.py:638:            "max_tokens": ("INT", {"default": 8192, "min": 512, "max": 32768, "step": 256}),
+deploy\china-lmstudio-managed-staging-20260904-175549\ComfyUI-MiniMax-H3-Prompt-Enhancer\prompt_enhancer_node.py:685:                max_tokens, request_timeout, startup_timeout, repair_attempts, disable_thinking,
+deploy\china-lmstudio-managed-staging-20260904-175549\ComfyUI-MiniMax-H3-Prompt-Enhancer\prompt_enhancer_node.py:706:            registered_model_dirs, gpu_layers, context_size, threads, temperature, max_tokens,
+deploy\china-lmstudio-managed-staging-20260904-175549\ComfyUI-MiniMax-H3-Prompt-Enhancer\web\backend_toggle.js:3069:        ["max_tokens", "Maximum output tokens"],
+deploy\china-lmstudio-managed-staging-20260904-175549\ComfyUI-MiniMax-H3-Prompt-Enhancer\web\backend_toggle.js:3722:    sanitizeIntegerWidget(node, "max_tokens", 4096, 512, 32768);
+deploy\china-lmstudio-managed-staging-20260904-175549\ComfyUI-MiniMax-H3-Prompt-Enhancer\tests\fixtures\legacy_node_inputs_v050.json:14:      "max_tokens",
+deploy\china-lmstudio-managed-staging-20260904-175549\ComfyUI-MiniMax-H3-Prompt-Enhancer\tests\fixtures\legacy_node_inputs_v050.json:53:      "max_tokens",
+deploy\china-lmstudio-managed-staging-20260904-175549\ComfyUI-MiniMax-H3-Prompt-Enhancer\tests\test_creative_direction_compatibility.py:71:        fields.extend([*TITLE_FIELDS, "system_prompt_override", "max_tokens"])
+deploy\china-lmstudio-managed-staging-20260904-175549\ComfyUI-MiniMax-H3-Prompt-Enhancer\tests\test_creative_direction_compatibility.py:104:            legacy.remove("max_tokens")
+deploy\china-lmstudio-managed-staging-20260904-175549\ComfyUI-MiniMax-H3-Prompt-Enhancer\tests\test_prompt_enhancer.py:142:    assert "max_tokens" not in payloads[0][1]
+deploy\china-lmstudio-managed-staging-20260904-175549\ComfyUI-MiniMax-H3-Prompt-Enhancer\tests\test_prompt_enhancer.py:160:    assert "max_tokens" not in payloads[0][1]
+deploy\china-lmstudio-managed-staging-20260904-175549\ComfyUI-MiniMax-H3-Prompt-Enhancer\tests\test_prompt_enhancer.py:161:    assert payloads[1][1]["max_tokens"] == 4096
+deploy\china-lmstudio-managed-staging-20260904-175549\ComfyUI-MiniMax-H3-Prompt-Enhancer\tests\test_prompt_enhancer.py:234:    assert "maxTokens" not in manifest
+deploy\china-lmstudio-managed-staging-20260904-175549\ComfyUI-MiniMax-H3-Prompt-Enhancer\tests\test_prompt_enhancer.py:245:    assert "maxTokens" not in manifest
+deploy\china-lmstudio-managed-staging-20260904-175549\ComfyUI-MiniMax-H3-Prompt-Enhancer\tests\test_prompt_enhancer_node.py:128:        max_tokens=4096,
+deploy\china-lmstudio-managed-staging-20260904-175549\ComfyUI-MiniMax-H3-Prompt-Enhancer\tests\test_prompt_enhancer_node.py:230:            expected_tail += ["title_sequence_recipe", "title_sequence_energy", "title_text", "credit_lines", "title_placement", "system_prompt_override", "max_tokens"]
+deploy\china-lmstudio-managed-staging-20260904-175549\ComfyUI-MiniMax-H3-Prompt-Enhancer\tests\test_prompt_enhancer_node.py:237:    assert "max_tokens" not in MiniMaxH3PromptEnhancer.INPUT_TYPES()["required"]
+deploy\china-lmstudio-managed-staging-20260904-175549\ComfyUI-MiniMax-H3-Prompt-Enhancer\tests\test_prompt_enhancer_node.py:238:    assert MiniMaxH3PromptEnhancer.INPUT_TYPES()["optional"]["max_tokens"][1]["default"] == 0
+release\h3-vram-handoff\canary\recent-history.json:426:            "max_tokens": 8192,
+release\h3-vram-handoff\canary\recent-history.json:601:              "  File \"C:\\Users\\lbbch\\AppData\\Local\\Comfy-Desktop\\ComfyUI-Installs\\ComfyUI\\ComfyUI\\custom_nodes\\ComfyUI-MiniMax-H3-Prompt-Enhancer\\prompt_enhancer.py\", line 970, in complete\n    return _completion(\n        root, selected_model, messages, secret, temperature, max_tokens, timeout, disable_thinking,\n        on_model_instance_id=record_instance_id\n    )\n",
+release\h3-vram-handoff\canary\recent-history.json:633:              "max_tokens": [
+release\h3-vram-handoff\canary\recent-history.json:1136:            "max_tokens": 8192,
+release\h3-vram-handoff\canary\recent-history.json:1786:            "max_tokens": 8192,
+release\h3-vram-handoff\canary\second-prompt-graph.json:40:      "max_tokens": 8192,
+release\h3-vram-handoff\canary\second-prompt-history.json:45:            "max_tokens": 8192,

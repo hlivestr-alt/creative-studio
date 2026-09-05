@@ -4,8 +4,10 @@ import { dirname, join, normalize, resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { HistoryDatabase, loadSqlite } from './database';
 import { SettingsStore } from './settings-store';
+import { ComputeService } from './compute-service';
+import { ExplicitReferenceAuthorizationStore } from './reference-authorization';
 import { defaultSettings, getChatWorkspaceUrl } from '../../src/domain/settings';
-import type { AppSettings, ChatPanelBounds, HistoryInput, HistoryUpdate } from '../../src/domain/types';
+import type { AppSettings, ChatPanelBounds, ComfyOutputFile, H3PromptEngineSettings, H3PromptInput, H3PromptUpdate, HistoryInput, HistoryUpdate, RemoteH3GenerationRequest } from '../../src/domain/types';
 import { windowChannels, windowStateFromMaximized, type WindowState } from '../../src/domain/window';
 import { calculateChatViewBounds, hiddenChatViewBounds, type LayoutRect, type WindowContentSize } from './chat-bounds';
 
@@ -15,6 +17,8 @@ let mainWindow: BrowserWindow | null = null;
 let chatView: WebContentsView | null = null;
 let database: HistoryDatabase | null = null;
 let settingsStore: SettingsStore | null = null;
+let computeService: ComputeService | null = null;
+const referenceAuthorization = new ExplicitReferenceAuthorizationStore();
 let lastChatPanelBounds: ChatPanelBounds | null = null;
 const smokeOutput = process.argv.find((argument) => argument.startsWith('--smoke-test-output='))?.split('=').slice(1).join('=');
 const smokeMaximized = process.argv.includes('--smoke-test-maximized');
@@ -23,6 +27,7 @@ const smokeChat = process.argv.includes('--smoke-test-chat');
 const smokeLongContent = process.argv.includes('--smoke-test-long-content');
 const smokeLayouts = process.argv.includes('--smoke-test-layouts');
 const smokeRoute = process.argv.find((argument) => argument.startsWith('--smoke-test-route='))?.split('=').slice(1).join('=');
+const smokeH3 = process.argv.includes('--smoke-test-h3');
 const smokeCarousel = process.argv.includes('--smoke-test-carousel');
 const smokePrepared = process.argv.includes('--smoke-test-prepared');
 const smokeChatVisible = process.argv.includes('--smoke-test-chat-visible');
@@ -31,13 +36,16 @@ const smokeChatFullscreen = process.argv.includes('--smoke-test-chat-fullscreen'
 const appRoot = app.isPackaged ? app.getAppPath() : resolve(dirname(__filename), '..');
 const assetRoot = app.isPackaged ? process.resourcesPath : appRoot;
 const appIconPath = app.isPackaged ? join(process.resourcesPath, 'app-icon.ico') : join(appRoot, 'assets', 'app-icon.ico');
+const h3SystemPromptPath = app.isPackaged
+  ? join(process.resourcesPath, 'prompts', 'minimax-h3-lmstudio-system.md')
+  : join(appRoot, 'prompts', 'minimax-h3-lmstudio-system.md');
 const preloadPath = join(dirname(__filename), 'preload.cjs');
 
 if (process.platform === 'win32') app.setAppUserModelId('com.proya.creativestudio');
 
 function currentSettings(): AppSettings {
   if (!settingsStore) throw new Error('Settings unavailable');
-  return settingsStore.get();
+  return { ...settingsStore.get(), h3SystemPromptPath };
 }
 
 function isAllowedChatUrl(value: string): boolean {
@@ -116,8 +124,30 @@ function registerIpc(): void {
   ipcMain.handle('history:list', (_event, limit?: number) => database?.list(limit ?? 100) ?? []);
   ipcMain.handle('history:create', (_event, input: HistoryInput) => database?.create(input));
   ipcMain.handle('history:update', (_event, id: number, update: HistoryUpdate) => database?.update(id, update));
+  ipcMain.handle('h3-history:list', (_event, limit?: number) => database?.listH3(limit ?? 100) ?? []);
+  ipcMain.handle('h3-history:create', (_event, input: H3PromptInput) => database?.createH3(input));
+  ipcMain.handle('h3-history:update', (_event, id: number, update: H3PromptUpdate) => database?.updateH3(id, update));
   ipcMain.handle('settings:get', () => currentSettings());
   ipcMain.handle('settings:set', (_event, settings: AppSettings) => settingsStore?.set(settings));
+  ipcMain.handle('compute:test-connection', (_event, url: string) => computeService?.testConnection(url));
+  ipcMain.handle('compute:test-prompt-engine', (_event, url: string, settings?: H3PromptEngineSettings) => computeService?.testPromptEngine(url, settings ?? currentSettings().h3PromptEngine));
+  ipcMain.handle('compute:get-workflow-defaults', () => computeService?.getWorkflowDefaults());
+  ipcMain.handle('compute:submit-h3', (event, request: RemoteH3GenerationRequest) => computeService?.submitH3(request, event.sender.id));
+  ipcMain.handle('compute:get-job-state', (_event, localJobId: string) => computeService?.getJobState(localJobId));
+  ipcMain.handle('compute:list-jobs', (_event, limit?: number) => computeService?.listJobs(limit ?? 100) ?? []);
+  ipcMain.handle('compute:download-result', (_event, localJobId: string) => computeService?.downloadResult(localJobId));
+  ipcMain.handle('compute:open-result', (_event, localJobId: string) => {
+    const path = computeService?.getLocalResultPath(localJobId);
+    if (!path) throw new Error('Compute service unavailable');
+    return shell.openPath(path);
+  });
+  ipcMain.handle('compute:open-output', async (_event, output: ComfyOutputFile) => {
+    const url = computeService?.getOutputUrl(output);
+    if (!url) throw new Error('Compute service unavailable');
+    const configuredOrigin = new URL(currentSettings().remoteComfyUrl).origin;
+    if (new URL(url).origin !== configuredOrigin) throw new Error('Output URL does not belong to the configured ComfyUI server');
+    await shell.openExternal(url);
+  });
   ipcMain.handle('clipboard:write', (_event, text: string) => clipboard.writeText(text));
   ipcMain.handle(windowChannels.minimize, () => { mainWindow?.minimize(); });
   ipcMain.handle(windowChannels.toggleMaximize, () => {
@@ -143,7 +173,12 @@ function registerIpc(): void {
     const target = relativePath ? resolve(assetRoot, relativePath) : settings.productAssetsDirectory;
     return existsSync(target) ? shell.showItemInFolder(target) : shell.openPath(settings.productAssetsDirectory);
   });
-  ipcMain.handle('files:open-folder', (_event, kind: 'products' | 'references') => shell.openPath(kind === 'products' ? currentSettings().productAssetsDirectory : currentSettings().referencesDirectory));
+  ipcMain.handle('files:open-folder', (_event, kind: 'products' | 'references' | 'remote-output') => shell.openPath(kind === 'products' ? currentSettings().productAssetsDirectory : kind === 'references' ? currentSettings().referencesDirectory : currentSettings().remoteOutputDirectory));
+  ipcMain.handle('files:authorize-reference', (event, sourcePath: unknown) => {
+    if (typeof sourcePath !== 'string') throw new Error('Reference selection did not provide a valid local file.');
+    return referenceAuthorization.authorize(event.sender.id, sourcePath);
+  });
+  ipcMain.handle('files:clear-reference', (event) => { referenceAuthorization.clear(event.sender.id); });
   ipcMain.handle('files:copy-path', (_event, relativePath: string) => clipboard.writeText(resolve(assetRoot, relativePath)));
   ipcMain.handle('files:copy-paths', (_event, relativePaths: string[]) => clipboard.writeText(relativePaths.map((relativePath) => resolve(assetRoot, relativePath)).join('\n')));
 }
@@ -163,6 +198,7 @@ async function createWindow(): Promise<void> {
     icon: existsSync(appIconPath) ? appIconPath : undefined,
     webPreferences: { preload: preloadPath, contextIsolation: true, sandbox: true, nodeIntegration: false }
   });
+  const sessionId = mainWindow.webContents.id;
   mainWindow.removeMenu();
   if (smokeOutput) {
     mainWindow.webContents.on('console-message', (_event, level, message) => console.log(`[renderer:${level}] ${message}`));
@@ -174,7 +210,7 @@ async function createWindow(): Promise<void> {
   mainWindow.on('enter-full-screen', requestChatBoundsRefresh);
   mainWindow.on('leave-full-screen', requestChatBoundsRefresh);
   mainWindow.webContents.on('did-finish-load', sendWindowState);
-  mainWindow.on('closed', () => { chatView = null; mainWindow = null; lastChatPanelBounds = null; });
+  mainWindow.on('closed', () => { referenceAuthorization.clear(sessionId); chatView = null; mainWindow = null; lastChatPanelBounds = null; });
   const devUrl = process.env.VITE_DEV_SERVER_URL;
   if (devUrl) await mainWindow.loadURL(devUrl); else await mainWindow.loadFile(join(appRoot, 'dist', 'index.html'));
   if (smokeOutput) {
@@ -288,14 +324,39 @@ async function createWindow(): Promise<void> {
       console.log(`Layout smoke: ${JSON.stringify({ routes: routeMetrics, controlsFullscreen, chatFullscreen, narrowSplit })}`);
     }
     if (smokeRoute && ready) {
-      const safeRoute = smokeRoute.replace(/[^a-z]/gi, '');
-      await mainWindow.webContents.executeJavaScript(`document.querySelector('.sidebar a[href="#/${safeRoute}"]')?.click()`);
-      const selector = `.${safeRoute === 'today' ? 'studio-split' : `${safeRoute}-page`}`;
+      const routePath = smokeRoute.toLowerCase().replace(/[^a-z0-9]+/gi, '-').replace(/^-|-$/g, '');
+      await mainWindow.webContents.executeJavaScript(`document.querySelector('.sidebar a[href="#/${routePath}"]')?.click()`);
+      const selector = routePath === 'today' ? '.studio-split' : routePath === 'h3-video-prompts' ? '.h3-page' : `.${routePath}-page`;
       const routeReady = await waitForRendererSelector(selector);
       await new Promise((resolveDelay) => setTimeout(resolveDelay, 350));
       await mainWindow.webContents.executeJavaScript('new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve)))').catch(() => undefined);
-      console.log(`Smoke route: ${safeRoute}, ready=${routeReady}, hash=${await mainWindow.webContents.executeJavaScript('window.location.hash').catch(() => 'unavailable')}, heading=${await mainWindow.webContents.executeJavaScript('document.querySelector(\'h1\')?.textContent').catch(() => 'unavailable')}`);
+      console.log(`Smoke route: ${routePath}, ready=${routeReady}, hash=${await mainWindow.webContents.executeJavaScript('window.location.hash').catch(() => 'unavailable')}, heading=${await mainWindow.webContents.executeJavaScript('document.querySelector(\'h1\')?.textContent').catch(() => 'unavailable')}`);
     }
+    if (smokeH3 && ready) {
+      await mainWindow.webContents.executeJavaScript("document.querySelector('.sidebar a[href=\"#/h3-video-prompts\"]')?.click()");
+      const h3Ready = await waitForRendererSelector('.h3-page');
+      if (h3Ready) {
+        const result = await mainWindow.webContents.executeJavaScript(`(() => {
+          const root = document.querySelector('.h3-page');
+          const text = root?.textContent ?? '';
+          return {
+            routeReady: Boolean(root),
+            hasChatPane: Boolean(root?.querySelector('.chat-browser-host')),
+            hasChatHandoff: Boolean(root?.querySelector('.h3-handoff-card')),
+            hasChatCopyAction: text.includes('ChatGPT'),
+            hasSingleGenerateButton: root?.querySelectorAll('[aria-label="Generate H3 video"]').length === 1,
+            hasRef2vaLock: text.includes('REF2VA'),
+            hasPromptEngine: text.includes('Prompt Engine'),
+            hasStageRail: root?.querySelectorAll('.h3-stage').length === 9,
+            finalPromptIsReadonly: !root?.querySelector('.h3-final-prompt[contenteditable="true"]')
+          };
+        })()`).catch(() => null);
+        console.log(`H3 smoke: ${JSON.stringify(result)}`);
+      } else {
+        console.log('H3 smoke: route did not render');
+      }
+    }
+
     if ((smokeCarousel || smokePrepared) && ready) {
       await mainWindow.webContents.executeJavaScript("window.location.hash = '#/today'");
       await waitForRendererSelector('.studio-split');
@@ -327,9 +388,10 @@ async function createWindow(): Promise<void> {
 }
 
 app.whenReady().then(async () => {
-  const root = app.isPackaged ? assetRoot : process.cwd();
+  const root = app.isPackaged ? process.resourcesPath : appRoot;
   settingsStore = new SettingsStore(join(app.getPath('userData'), 'settings.json'), defaultSettings(root));
   database = new HistoryDatabase(join(app.getPath('userData'), 'proya-creative-studio.sqlite'), await loadSqlite());
+  computeService = new ComputeService(currentSettings, (state) => mainWindow?.webContents.send('compute:job-state', state), !app.isPackaged, database, [join(root, 'product-assets'), join(root, 'references')], referenceAuthorization);
   protocol.handle('proya-asset', (request) => {
     const url = new URL(request.url);
     const relative = normalize(`${url.host}${decodeURIComponent(url.pathname)}`).replace(/^[/\\]+/, '');
@@ -341,8 +403,13 @@ app.whenReady().then(async () => {
   registerIpc();
   screen.on('display-metrics-changed', requestChatBoundsRefresh);
   await createWindow();
+  if (!smokeOutput) {
+    void computeService?.restoreJobs().catch((reason) => {
+      console.error(`Remote H3 job restore failed: ${reason instanceof Error ? reason.message : String(reason)}`);
+    });
+  }
   app.on('activate', async () => { if (BrowserWindow.getAllWindows().length === 0) await createWindow(); });
 });
 
 app.on('window-all-closed', () => { if (process.platform !== 'darwin') app.quit(); });
-app.on('before-quit', () => database?.close());
+app.on('before-quit', () => { computeService?.dispose(); database?.close(); });

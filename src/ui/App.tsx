@@ -1,10 +1,11 @@
 import { useEffect, useState } from 'react';
 import { Navigate, NavLink, Route, Routes } from 'react-router-dom';
-import { CalendarDays, Copy, History, Minus, PackageOpen, Settings, Square, X } from 'lucide-react';
+import { CalendarDays, Copy, Film, History, Minus, PackageOpen, Settings, Square, X } from 'lucide-react';
 import { AppProvider } from './AppContext';
 import { TodayPage } from './TodayPage';
 import { HistoryPage } from './HistoryPage';
 import { SettingsPage } from './SettingsPage';
+import { H3VideoPromptsPage } from './H3VideoPromptsPage';
 import { maximizeButtonLabel } from '../domain/window';
 import appIconUrl from '../../assets/app-icon.svg';
 
@@ -48,6 +49,7 @@ export function App() {
           </div>
           <nav className="sidebar-nav" aria-label="Primary navigation">
             <NavLink end to="/today"><CalendarDays size={17} /><span>Today</span></NavLink>
+            <NavLink end to="/h3-video-prompts"><Film size={17} /><span>H3 Video Prompts</span></NavLink>
             <NavLink end to="/history"><History size={17} /><span>History</span></NavLink>
           </nav>
           <div className="sidebar-divider" />
@@ -59,6 +61,7 @@ export function App() {
         <main className="main-area">
           <Routes>
             <Route path="/today" element={<TodayPage />} />
+            <Route path="/h3-video-prompts" element={<H3VideoPromptsPage />} />
             <Route path="/history" element={<HistoryPage />} />
             <Route path="/settings" element={<SettingsPage />} />
             <Route path="*" element={<Navigate to="/today" replace />} />

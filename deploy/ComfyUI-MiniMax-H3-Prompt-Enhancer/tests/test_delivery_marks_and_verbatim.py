@@ -1,0 +1,303 @@
+# SPDX-License-Identifier: GPL-3.0-only
+"""Delivery marks and the verbatim_source latitude.
+
+Both features exist because H3 has no emotion-tag syntax and no pause syntax at all: its
+published skill puts delivery in prose outside <d> and allows only language plus exact words
+inside it. So a bracketed mark is authoring shorthand that must be resolved before the prompt
+leaves this node, and never emitted.
+"""
+
+import prompt_enhancer_node as node
+import prompt_guides as guides
+
+
+def test_verbatim_source_is_a_distinct_profile_the_legacy_flag_pair_cannot_encode():
+    assert guides.ENHANCEMENT_PROFILES[0] == "verbatim_source"
+    # Both strictest levels collapse to the same legacy booleans, which is exactly why the
+    # resolved name is threaded separately instead of being rebuilt from them.
+    assert node._latitude_flags("verbatim_source") == (False, False)
+    assert node._latitude_flags("conservative_grounded") == (False, False)
+    assert node._resolved_latitude_name("verbatim_source") == "verbatim_source"
+
+    verbatim = guides.system_prompt_for_mode("t2va", "verbatim_source")
+    conservative = guides.system_prompt_for_mode("t2va", False)
+    assert "VERBATIM_SOURCE" in verbatim
+    assert "CONSERVATIVE_GROUNDED" in conservative
+    assert verbatim != conservative
+    # The distinguishing promise: conservative is required to expand, verbatim is required not to.
+    assert "source terseness is deliberate" in verbatim
+    assert "Do not preserve source terseness" in conservative
+
+
+def test_legacy_callers_are_unaffected():
+    assert node._resolved_latitude_name(None, True, False) == "enhanced_production"
+    assert node._resolved_latitude_name(None, True, True) == "invented_production"
+    assert node._resolved_latitude_name(None, False, False) == "conservative_grounded"
+
+
+def test_every_backend_accepts_creative_latitude_with_the_same_tail():
+    """Both bugs this pins were shipped, and only one of them crashed.
+
+    The GGUF backend never got the parameter, so selecting a local model raised
+    TypeError. Worse, its inner call passed the tail positionally, so once
+    creative_latitude was inserted before lora_trigger_words the triggers began
+    arriving as the latitude and were dropped in silence.
+    """
+    import inspect
+
+    import gguf_server
+    import prompt_enhancer
+
+    tail = ["editing_intent", "invent_scene", "creative_latitude", "lora_trigger_words"]
+    for function in (
+        gguf_server.enhance_prompt_with_gguf_server,
+        prompt_enhancer.enhance_prompt,
+        prompt_enhancer.enhance_prompt_with_completion,
+    ):
+        names = [p.name for p in inspect.signature(function).parameters.values()]
+        assert names[-4:] == tail, function.__name__
+
+
+def test_emotion_mark_leaves_the_spoken_words_and_is_reported():
+    cleaned, marks = guides.extract_delivery_marks("No me toques [enfadada] y vete")
+    assert cleaned == "No me toques y vete"
+    assert marks == ["angrily"]
+
+
+def test_pause_mark_becomes_an_ellipsis_because_h3_documents_no_pause_syntax():
+    cleaned, marks = guides.extract_delivery_marks("Vete [pausa] ahora")
+    assert cleaned == "Vete… ahora"
+    assert marks == ["a held beat of silence at that point"]
+
+
+def test_official_h3_brackets_are_never_eaten():
+    for markup in ("[Shot 2]", "[English]", "[unclear]"):
+        cleaned, marks = guides.extract_delivery_marks(f"before {markup} after")
+        assert markup in cleaned
+        assert marks == []
+
+
+def test_marks_do_not_survive_into_the_verbatim_dialogue_contract():
+    source = 'She says, "No me toques [enfadada] y vete [pausa] ahora."'
+    contracts = guides._source_dialogue_contracts(source)
+    assert contracts, "the quoted line should still be detected as dialogue"
+    _language, quote, _internal = contracts[0]
+    assert "[enfadada]" not in quote
+    assert "[pausa]" not in quote
+    assert "…" in quote
+
+
+def _lines_of(contract):
+    return [line for line in contract.splitlines() if line.startswith('- "')]
+
+
+def test_two_speakers_on_one_line_keep_their_own_marks():
+    # Found by reading a real generated prompt: the woman was given the man's tears as well as her
+    # own anger. Window-based attachment read past the sentence into "He answers 😢", which is the
+    # *second* speaker's attribution, so the first quote claimed both marks.
+    contract = guides._delivery_marks_contract(
+        'Close-up. She says \U0001f621 "Fuera de mi casa". He answers \U0001f622 "No me dejes".'
+    )
+    angry, sad = _lines_of(contract)
+    assert "shouts" in angry and "jaw setting" in angry
+    assert "tears" not in angry and "eyes filling" not in angry
+    assert "tears" in sad and "eyes filling" in sad
+    assert "shouts" not in sad
+
+
+def test_expression_changes_between_two_lines_from_the_same_speaker():
+    contract = guides._delivery_marks_contract(
+        'She says \U0001f620 "Vete" and then \U0001f622 "por favor".'
+    )
+    first, second = _lines_of(contract)
+    assert "hard, low voice" in first and "jaw tightening" in first
+    assert "close to tears" in second and "eyes filling" in second
+    assert "angry" not in second
+
+
+def test_mark_after_the_quote_still_belongs_to_it():
+    contract = guides._delivery_marks_contract('He whispers "Ven aqui" \U0001f92b. She nods.')
+    line = _lines_of(contract)[0]
+    assert line.startswith('- "Ven aqui" → whispers,')
+    assert "visible: head tipping closer" in line
+
+
+def test_emoji_beside_a_line_attaches_to_that_line_not_the_next():
+    source = 'A: \U0001f621 "Fuera de mi casa"\nB: \U0001f622 "No me dejes"'
+    contract = guides._delivery_marks_contract(source)
+    assert '- "Fuera de mi casa" → shouts' in contract
+    assert '- "No me dejes" → in a low, unsteady voice, close to tears' in contract
+    # The failure that matters: one line's emoji claimed by the other.
+    assert "shouts" not in contract.split("No me dejes")[1]
+
+
+def test_emoji_resolves_to_a_documented_verb_where_one_exists():
+    # The colour that follows is direction; the verb has to come FIRST so it can serve as the
+    # attribution verb the guide asks for, rather than a second one being invented beside it.
+    for emoji, verb in (("\U0001f92b", "whispers"), ("\U0001f621", "shouts"), ("\U0001f3a4", "sings")):
+        prose, kind = guides.DELIVERY_EMOJI[emoji]
+        assert kind == "verb"
+        assert prose.startswith(verb), prose
+    # The official voiceover phrasing is fixed wording, not a paraphrase.
+    assert guides.DELIVERY_EMOJI["\U0001f4e2"][0].startswith("says in an off-screen voiceover")
+
+
+def test_advanced_delivery_marks_have_actionable_voice_and_face_direction():
+    expected = {
+        "🗣️": ("verb", "calls out", "distant listener"),
+        "😌": ("prose", "calm, steady voice", "shoulders easing"),
+        "😰": ("prose", "trembling, breath-thin voice", "lower lip trembling"),
+    }
+    for emoji, (kind, voice_fragment, face_fragment) in expected.items():
+        prose, actual_kind = guides.DELIVERY_EMOJI[emoji]
+        assert actual_kind == kind
+        assert voice_fragment in prose
+        assert prose.count(",") >= 2
+        assert face_fragment in guides.DELIVERY_FACE[emoji]
+
+
+def test_advanced_aliases_resolve_to_the_same_multi_axis_prose():
+    for source, expected in (
+        ("[steady] Hello", "in a calm, steady voice, pitch level and the pace measured"),
+        ("[temblorosa] Hello", "in a trembling, breath-thin voice, pitch wavering and words unevenly paced"),
+        ("[calls out] Hello", "calls out, voice projected clear and bright, pitch carried forward"),
+    ):
+        cleaned, marks = guides.extract_delivery_marks(source)
+        assert cleaned == "Hello"
+        assert marks and marks[0].startswith(expected)
+
+
+def test_advanced_marks_never_leak_and_calls_out_owns_only_its_line():
+    source = 'A: 🗣️ "Over here"\nB: 😰 "I cannot"\nC: 😌 "Breathe"'
+    contract = guides._delivery_marks_contract(source)
+    assert '"Over here" → calls out' in contract
+    assert '"I cannot" → in a trembling, breath-thin voice' in contract
+    assert '"Breathe" → in a calm, steady voice' in contract
+    request = guides.build_user_request(source, "t2va", 5.0)
+    for emoji in ("🗣️", "😰", "😌"):
+        assert emoji not in request
+
+
+def test_every_mark_names_more_than_one_vocal_axis():
+    """A bare verb or a lone adjective is a label, not direction.
+
+    The guide asks a speaker to be established by pitch, timbre, speaking rate and accent, so
+    each mark should reach at least two of those rather than stopping at "shouts".
+    """
+    for emoji, (prose, kind) in guides.DELIVERY_EMOJI.items():
+        if kind == "pause":
+            continue
+        assert prose.count(",") >= 1, f"{emoji} reads as a bare label: {prose!r}"
+        assert len(prose.split()) >= 5, f"{emoji} is too thin to act on: {prose!r}"
+
+
+def test_every_mark_carries_a_visible_cue():
+    # H3 renders picture and sound together, so a voice-only instruction leaves the face blank
+    # while the line is delivered.
+    missing = [e for e in guides.DELIVERY_EMOJI if e not in guides.DELIVERY_FACE]
+    assert missing == []
+
+
+def test_the_voiceover_cue_states_the_lips_stay_closed():
+    """Its cue is the opposite of an expression, and the spec demands it.
+
+    Leaving the voiceover marks with no visible instruction at all was half right — they carry no
+    emotion — but it left the model free to animate the mouth under an off-screen voice.
+    """
+    for emoji in ("\U0001f4e2", "\U0001f399️"):
+        assert "lips staying closed" in guides.DELIVERY_FACE[emoji], emoji
+        assert guides.DELIVERY_EMOJI[emoji][0].startswith("says in an off-screen voiceover")
+
+
+def test_visible_cue_is_attached_per_line():
+    contract = guides._delivery_marks_contract(
+        'A: \U0001f621 "Fuera de mi casa"\nB: \U0001f4e2 "Nunca volvi"'
+    )
+    assert '"Fuera de mi casa" → shouts,' in contract
+    assert "jaw setting" in contract
+    voiceover_line = [line for line in contract.splitlines() if "Nunca volvi" in line][0]
+    assert "lips staying closed" in voiceover_line
+    assert "jaw setting" not in voiceover_line
+    # The gate matters as much as the cue: without this the emotional-performance contract is
+    # source-gated and a cautious writer treats a voice descriptor as audio-only.
+    assert "the user establishing that emotion" in contract
+
+
+def test_emoji_never_survives_into_the_spoken_words_or_the_echo():
+    source = 'She says, "Ven aquí \U0001f92b ahora"'
+    cleaned, marks = guides.extract_delivery_marks('Ven aquí \U0001f92b ahora')
+    assert "\U0001f92b" not in cleaned
+    assert marks and marks[0].startswith("whispers")
+    request = guides.build_user_request(source, "t2va", 5.0)
+    assert "\U0001f92b" not in request
+
+
+def test_pause_note_only_appears_when_a_pause_was_requested():
+    with_pause = guides._delivery_marks_contract('She says, "Vete ⏸️ ahora"')
+    without = guides._delivery_marks_contract('She says, "Vete \U0001f621 ahora"')
+    assert "ellipsis" in with_pause
+    assert "ellipsis" not in without
+
+
+def test_ordinary_speech_cues_are_recognised_as_source_dialogue():
+    # Found by running a real generation: "He answers" was not a cue, so the user's own line went
+    # undetected as source dialogue and validation then rejected it as *invented* dialogue.
+    quotes = [
+        quote for _language, quote, _internal in guides._source_dialogue_contracts(
+            'She says "No me toques". He answers "Por favor".'
+        )
+    ]
+    assert quotes == ["No me toques", "Por favor"]
+    for cue in ("murmurs", "mutters", "yells", "screams", "insists", "begs", "pleads"):
+        assert guides._source_dialogue_contracts(f'He {cue} "ven aqui".'), cue
+
+
+def test_speech_cues_do_not_fire_on_ordinary_quoted_prose():
+    # A cue only counts beside a quote, so a non-vocal verb near a quoted object stays silent.
+    assert guides._source_dialogue_contracts(
+        'He repeats the gesture and picks up "the red book" from the shelf.'
+    ) == []
+
+
+def _validate(prompt):
+    return guides.validate_prompt(prompt, "t2va", 5.0)["errors"]
+
+
+def test_validator_names_leaked_shorthand_instead_of_blaming_invented_dialogue():
+    leaked = (
+        "integrated_multimodal_description: [Shot 1] A woman \U0001f620 says: "
+        "<d>[English] No me toques [enfadada]</d>\n\noverall_soundscape: Rain.\n\nnon_diegetic_music: N/A"
+    )
+    shorthand = [error for error in _validate(leaked) if "shorthand" in error]
+    # Emoji and bracket are reported separately: only the bracket was ever caught before, and only
+    # indirectly, as "invented dialogue", which points at the wrong cause.
+    assert any("\U0001f620" in error for error in shorthand)
+    assert any("[enfadada]" in error for error in shorthand)
+
+
+def test_validator_does_not_flag_official_h3_brackets():
+    clean = (
+        "integrated_multimodal_description: [Shot 1] The woman (S1) says in a hard, angry voice: "
+        "<d>[English] No me toques</d>\n\noverall_soundscape: Rain.\n\nnon_diegetic_music: N/A"
+    )
+    assert [error for error in _validate(clean) if "shorthand" in error] == []
+
+
+def test_contract_actually_reaches_the_built_user_request():
+    # Regression: the contract was first attached to an unreachable VOICE POLICY branch, so every
+    # unit test passed while the model never saw a word of it. Assert on the real output.
+    source = 'A woman turns and says, "No me toques [enfadada] y vete [pausa] ahora."'
+    request = guides.build_user_request(source, "t2va", 5.0)
+    assert "DELIVERY MARKS" in request
+    assert "angrily" in request
+    assert "[enfadada]" not in request
+    assert "[pausa]" not in request
+
+
+def test_contract_instructs_prose_outside_d_and_is_absent_when_unused():
+    source = 'She says, "No me toques [enfadada] y vete [pausa] ahora."'
+    contract = guides._delivery_marks_contract(source)
+    assert "angrily" in contract
+    assert "a held beat of silence at that point" in contract
+    assert "OUTSIDE its <d>" in contract
+    assert guides._delivery_marks_contract('She says, "Plain line."') == ""

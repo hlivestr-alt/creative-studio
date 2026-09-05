@@ -1,0 +1,40 @@
+ComfyUI-MiniMax-H3-Prompt-Enhancer/gguf_server.py:350:    max_tokens: int,
+ComfyUI-MiniMax-H3-Prompt-Enhancer/gguf_server.py:436:                    max_tokens,
+ComfyUI-MiniMax-H3-Prompt-Enhancer/gguf_server.py:458:                    "maxTokens": int(max_tokens),
+ComfyUI-MiniMax-H3-Prompt-Enhancer/prompt_enhancer_node.py:452:             "max_tokens": ("INT", {"default": 0, "min": 0, "max": 32768, "step": 256, "tooltip": "Optional manual completion limit. Leave 0 to omit the field and let LM Studio manage output length."}),
+ComfyUI-MiniMax-H3-Prompt-Enhancer/prompt_enhancer_node.py:471:                temperature, max_tokens=None, timeout_seconds=600, repair_attempts=2, disable_thinking=True,
+ComfyUI-MiniMax-H3-Prompt-Enhancer/prompt_enhancer_node.py:510:            remote_max_tokens = int(max_tokens) if max_tokens is not None and int(max_tokens) > 0 else None
+ComfyUI-MiniMax-H3-Prompt-Enhancer/prompt_enhancer_node.py:513:                temperature, remote_max_tokens, timeout_seconds, repair_attempts, allow_remote_endpoint,
+ComfyUI-MiniMax-H3-Prompt-Enhancer/prompt_enhancer_node.py:536:            if max_tokens is None or int(max_tokens) <= 0:
+ComfyUI-MiniMax-H3-Prompt-Enhancer/prompt_enhancer_node.py:537:                raise ValueError("Local GGUF enhancement requires an explicit positive max_tokens value.")
+ComfyUI-MiniMax-H3-Prompt-Enhancer/prompt_enhancer_node.py:541:                "", gpu_layers, context_size, threads, temperature, max_tokens, timeout_seconds,
+ComfyUI-MiniMax-H3-Prompt-Enhancer/prompt_enhancer_node.py:638:            "max_tokens": ("INT", {"default": 8192, "min": 512, "max": 32768, "step": 256}),
+ComfyUI-MiniMax-H3-Prompt-Enhancer/prompt_enhancer_node.py:685:                max_tokens, request_timeout, startup_timeout, repair_attempts, disable_thinking,
+ComfyUI-MiniMax-H3-Prompt-Enhancer/prompt_enhancer_node.py:706:            registered_model_dirs, gpu_layers, context_size, threads, temperature, max_tokens,
+ComfyUI-MiniMax-H3-Prompt-Enhancer/prompt_enhancer.py:282:                temperature: float, max_tokens: int | None, timeout: int,
+ComfyUI-MiniMax-H3-Prompt-Enhancer/prompt_enhancer.py:300:        if max_tokens is not None and int(max_tokens) > 0:
+ComfyUI-MiniMax-H3-Prompt-Enhancer/prompt_enhancer.py:301:            native_payload["max_output_tokens"] = int(max_tokens)
+ComfyUI-MiniMax-H3-Prompt-Enhancer/prompt_enhancer.py:323:    if max_tokens is not None and int(max_tokens) > 0:
+ComfyUI-MiniMax-H3-Prompt-Enhancer/prompt_enhancer.py:324:        payload["max_tokens"] = int(max_tokens)
+ComfyUI-MiniMax-H3-Prompt-Enhancer/prompt_enhancer.py:621:    max_output_tokens = int(manifest.get("maxTokens") or 0)
+ComfyUI-MiniMax-H3-Prompt-Enhancer/prompt_enhancer.py:628:                f"plus max_tokens={max_output_tokens}"
+ComfyUI-MiniMax-H3-Prompt-Enhancer/prompt_enhancer.py:934:                   temperature: float, max_tokens: int | None, timeout: int,
+ComfyUI-MiniMax-H3-Prompt-Enhancer/prompt_enhancer.py:971:            root, selected_model, messages, secret, temperature, max_tokens, timeout, disable_thinking,
+ComfyUI-MiniMax-H3-Prompt-Enhancer/prompt_enhancer.py:983:    if max_tokens is not None and int(max_tokens) > 0:
+ComfyUI-MiniMax-H3-Prompt-Enhancer/prompt_enhancer.py:984:        prompt_engine_manifest["maxTokens"] = int(max_tokens)
+ComfyUI-MiniMax-H3-Prompt-Enhancer/README.md:452:contract, so `max_tokens` now defaults to 8192 — if a saved workflow still carries a 16384 context
+ComfyUI-MiniMax-H3-Prompt-Enhancer/tests/test_creative_direction_compatibility.py:71:        fields.extend([*TITLE_FIELDS, "system_prompt_override", "max_tokens"])
+ComfyUI-MiniMax-H3-Prompt-Enhancer/tests/test_creative_direction_compatibility.py:104:            legacy.remove("max_tokens")
+ComfyUI-MiniMax-H3-Prompt-Enhancer/tests/test_prompt_enhancer_node.py:128:        max_tokens=4096,
+ComfyUI-MiniMax-H3-Prompt-Enhancer/tests/test_prompt_enhancer_node.py:230:            expected_tail += ["title_sequence_recipe", "title_sequence_energy", "title_text", "credit_lines", "title_placement", "system_prompt_override", "max_tokens"]
+ComfyUI-MiniMax-H3-Prompt-Enhancer/tests/test_prompt_enhancer_node.py:237:    assert "max_tokens" not in MiniMaxH3PromptEnhancer.INPUT_TYPES()["required"]
+ComfyUI-MiniMax-H3-Prompt-Enhancer/tests/test_prompt_enhancer_node.py:238:    assert MiniMaxH3PromptEnhancer.INPUT_TYPES()["optional"]["max_tokens"][1]["default"] == 0
+ComfyUI-MiniMax-H3-Prompt-Enhancer/tests/test_prompt_enhancer.py:142:    assert "max_tokens" not in payloads[0][1]
+ComfyUI-MiniMax-H3-Prompt-Enhancer/tests/test_prompt_enhancer.py:160:    assert "max_tokens" not in payloads[0][1]
+ComfyUI-MiniMax-H3-Prompt-Enhancer/tests/test_prompt_enhancer.py:161:    assert payloads[1][1]["max_tokens"] == 4096
+ComfyUI-MiniMax-H3-Prompt-Enhancer/tests/test_prompt_enhancer.py:234:    assert "maxTokens" not in manifest
+ComfyUI-MiniMax-H3-Prompt-Enhancer/tests/test_prompt_enhancer.py:245:    assert "maxTokens" not in manifest
+ComfyUI-MiniMax-H3-Prompt-Enhancer/tests/fixtures/legacy_node_inputs_v050.json:14:      "max_tokens",
+ComfyUI-MiniMax-H3-Prompt-Enhancer/tests/fixtures/legacy_node_inputs_v050.json:53:      "max_tokens",
+ComfyUI-MiniMax-H3-Prompt-Enhancer/web/backend_toggle.js:3069:        ["max_tokens", "Maximum output tokens"],
+ComfyUI-MiniMax-H3-Prompt-Enhancer/web/backend_toggle.js:3722:    sanitizeIntegerWidget(node, "max_tokens", 4096, 512, 32768);

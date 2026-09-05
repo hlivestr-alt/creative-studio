@@ -1,0 +1,713 @@
+diff --git a/__init__.py b/__init__.py
+index 9c7b59f..a08c820 100644
+--- a/__init__.py
++++ b/__init__.py
+@@ -8,6 +8,8 @@ if __package__:
+         MiniMaxH3PromptEnhancer,
+         MiniMaxH3PromptGuideBuilder,
+         MiniMaxH3PromptValidator,
++        MiniMaxH3PromptValidityGate,
++        MiniMaxH3UnloadLMStudioModel,
+         MiniMaxH3UnloadGGUFServer,
+         MiniMaxH3MediaManifestValidator,
+         MiniMaxH3ChainedMultishotOutput,
+@@ -19,6 +21,8 @@ if __package__:
+         "MiniMaxH3PromptEnhancer": MiniMaxH3PromptEnhancer,
+         "MiniMaxH3GGUFPromptEnhancer": MiniMaxH3GGUFPromptEnhancer,
+         "MiniMaxH3PromptValidator": MiniMaxH3PromptValidator,
++        "MiniMaxH3PromptValidityGate": MiniMaxH3PromptValidityGate,
++        "MiniMaxH3UnloadLMStudioModel": MiniMaxH3UnloadLMStudioModel,
+         "MiniMaxH3UnloadGGUFServer": MiniMaxH3UnloadGGUFServer,
+         "MiniMaxH3MediaManifestValidator": MiniMaxH3MediaManifestValidator,
+         "MiniMaxH3ChainedMultishotOutput": MiniMaxH3ChainedMultishotOutput,
+@@ -29,6 +33,8 @@ if __package__:
+         "MiniMaxH3PromptEnhancer": "MiniMax H3 Prompt Enhancer",
+         "MiniMaxH3GGUFPromptEnhancer": "MiniMax H3 GGUF Prompt Enhancer",
+         "MiniMaxH3PromptValidator": "MiniMax H3 Prompt Validator",
++        "MiniMaxH3PromptValidityGate": "MiniMax H3 Prompt Validity Gate",
++        "MiniMaxH3UnloadLMStudioModel": "MiniMax H3 Unload LM Studio Model",
+         "MiniMaxH3UnloadGGUFServer": "MiniMax H3 Unload GGUF Prompt Model",
+         "MiniMaxH3MediaManifestValidator": "MiniMax H3 Media Manifest Validator",
+         "MiniMaxH3ChainedMultishotOutput": "MiniMax H3 Chained Multishot Output",
+diff --git a/prompt_enhancer.py b/prompt_enhancer.py
+index d6682d4..d935c6c 100644
+--- a/prompt_enhancer.py
++++ b/prompt_enhancer.py
+@@ -9,4 +9,5 @@ import math
+ import os
+ import re
++import socket
+ import threading
+ from collections.abc import Callable
+@@ -86,8 +86,12 @@ def _request_json(url: str, payload: dict | None, api_key: str, timeout: int) -> dict:
+     try:
+         with urlopen(Request(url, data=body, headers=headers), timeout=timeout) as response:
+             return json.loads(response.read().decode("utf-8"))
+     except HTTPError as exc:
+         detail = exc.read().decode("utf-8", errors="replace")[:1000]
+         raise RuntimeError(f"LLM endpoint returned HTTP {exc.code}: {detail}") from exc
++    except (TimeoutError, socket.timeout) as exc:
++        raise RuntimeError(f"LLM request timed out after {int(timeout)} seconds.") from exc
+     except URLError as exc:
++        if isinstance(exc.reason, (TimeoutError, socket.timeout)):
++            raise RuntimeError(f"LLM request timed out after {int(timeout)} seconds.") from exc
+         raise RuntimeError(f"Cannot reach LLM endpoint {url}: {exc.reason}") from exc
+@@ -100,12 +105,66 @@ def available_models(root: str, api_key: str = "", timeout: int = 30) -> list[str]:
+     return [item for item in ids if item and not any(token in item.lower() for token in ("embedding", "embed-", "rerank"))]
+ 
+ 
++PROMPT_ENGINE_MODEL_ID = "qwen/qwen3.8-27b"
++
++def _native_root(root: str) -> str:
++    return root[:-3] if root.endswith("/v1") else root
++
++
++def _native_model_entry(payload: dict) -> dict | None:
++    models = payload.get("models") if isinstance(payload, dict) else []
++    if not isinstance(models, list):
++        return None
++    for item in models:
++        if not isinstance(item, dict):
++            continue
++        key = str(item.get("key", item.get("id", ""))).strip()
++        if key == PROMPT_ENGINE_MODEL_ID:
++            return item
++    return None
++
++
++def _native_model_observation(root: str, api_key: str, timeout: int) -> tuple[str, str | None]:
++    payload = _request_json(_native_root(root) + "/api/v1/models", None, api_key, timeout)
++    target = _native_model_entry(payload)
++    if target is None:
++        raise ValueError(f"{PROMPT_ENGINE_MODEL_ID} is not available in LM Studio on the remote PC.")
++    instances = target.get("loaded_instances") or []
++    instance_ids = [
++        str(instance.get("id", instance.get("instance_id", ""))).strip()
++        for instance in instances
++        if isinstance(instance, dict) and str(instance.get("id", instance.get("instance_id", ""))).strip()
++    ]
++    # A native chat response identifies the exact instance after JIT/autoload;
++    # preflight never guesses when more than one target instance is present.
++    return PROMPT_ENGINE_MODEL_ID, instance_ids[0] if len(instance_ids) == 1 else None
++
++
++def discover_model(endpoint: str, api_key: str = "", allow_remote_endpoint: bool = False,
++                   timeout: int = 15) -> tuple[str, str | None]:
++    """Resolve only the fixed autonomous LM Studio prompt model."""
++    root = _api_root(endpoint)
++    _require_allowed_endpoint(root, bool(allow_remote_endpoint))
++    try:
++        return _native_model_observation(root, str(api_key or ""), max(3, min(int(timeout), 60)))
++    except RuntimeError as exc:
++        # Keep compatibility with older OpenAI-compatible LM Studio builds;
++        # only the fixed target may satisfy discovery.
++        if not re.search(r"returned HTTP (?:400|404|405)", str(exc)):
++            raise
++        models = available_models(root, str(api_key or ""), max(3, min(int(timeout), 60)))
++        if PROMPT_ENGINE_MODEL_ID in models:
++            return PROMPT_ENGINE_MODEL_ID, None
++        raise ValueError(f"{PROMPT_ENGINE_MODEL_ID} is not available in LM Studio on the remote PC.")
++
++
+ def discover_models(endpoint: str, api_key: str = "", allow_remote_endpoint: bool = False,
+                     timeout: int = 15) -> list[str]:
+-    """Safely discover selectable chat models for the ComfyUI frontend."""
++    """Return the fixed autonomous prompt model when it is available."""
+     root = _api_root(endpoint)
+     _require_allowed_endpoint(root, bool(allow_remote_endpoint))
+-    return available_models(root, str(api_key or ""), max(3, min(int(timeout), 60)))
++    model, _instance_id = discover_model(root, str(api_key or ""), bool(allow_remote_endpoint), timeout)
++    return [model]
+ 
+ 
+ _NATIVE_CHAT_SUPPORT: dict[str, bool] = {}
+@@ -141,21 +218,11 @@ def _is_missing_native_endpoint(error: Exception) -> bool:
+     return bool(match) and int(match.group(1)) not in _AUTH_HTTP_CODES
+ 
+ 
+-def _compact_model_rank(model_id: str) -> tuple[int, int]:
+-    """Prefer a small local instruct model for auto mode instead of accidentally loading a 30B model."""
+-    value = model_id.lower()
+-    compact = bool(re.search(r"(?:^|[-_/])(?:0[._]?\d+|[1-8])b(?:$|[-_/])", value) or "e4b" in value)
+-    instruct = any(token in value for token in ("instruct", "-it", "heretic", "abliterated"))
+-    return (0 if compact else 1, 0 if instruct else 1)
+-
+-
+-def _model_name(root: str, requested: str, api_key: str, timeout: int) -> str:
++def _model_name(root: str, requested: str, api_key: str, timeout: int,
++                allow_remote_endpoint: bool = False) -> str:
+-    if str(requested).strip():
+-        return str(requested).strip()
+-    models = available_models(root, api_key, timeout)
+-    if not models:
+-        raise ValueError("No model was supplied and the endpoint returned no loaded models")
+-    return min(enumerate(models), key=lambda item: (_compact_model_rank(item[1]), item[0]))[1]
++    # Ignore legacy widget values; the autonomous contract has one target.
++    model, _instance_id = discover_model(root, api_key, bool(allow_remote_endpoint), timeout)
++    return model
+ 
+ 
+ def _native_chat_content(answer: dict) -> str:
+@@ -174,10 +249,26 @@ def _native_chat_content(answer: dict) -> str:
+     return ""
+ 
+ 
++def _loaded_instance_id(root: str, model: str, api_key: str, timeout: int) -> str:
++    """Return the one exact loaded instance for model, or fail rather than guess."""
++    payload = _request_json(_native_root(root) + "/api/v1/models", None, api_key, timeout)
++    matches = []
++    item = _native_model_entry(payload)
++    for instance in item.get("loaded_instances", []) if item else []:
++        if isinstance(instance, dict):
++            instance_id = str(instance.get("id", instance.get("instance_id", ""))).strip()
++            if instance_id:
++                matches.append(instance_id)
++    if len(matches) != 1:
++        raise RuntimeError("LM Studio did not expose exactly one loaded instance for the prompt model; H3 was not queued.")
++    return matches[0]
++
++
+ def _completion(root: str, model: str, messages: list[dict], api_key: str,
+                 temperature: float, max_tokens: int, timeout: int,
+                 disable_thinking: bool = True,
+-                prefer_lm_studio_native: bool = True) -> str:
++                prefer_lm_studio_native: bool = True,
++                on_model_instance_id: Callable[[str], None] | None = None) -> str:
+     native_root = root[:-3] if root.endswith("/v1") else root
+-    if disable_thinking and prefer_lm_studio_native and _native_chat_supported(native_root):
++    if prefer_lm_studio_native and _native_chat_supported(native_root):
+         native_payload = {
+@@ -191,11 +285,8 @@ def _completion(root: str, model: str, messages: list[dict], api_key: str,
+             ),
+             "temperature": float(temperature),
+             "max_output_tokens": int(max_tokens),
+-            "reasoning": "off",
+             "store": False,
+         }
+-        # The native route is the only one that reliably silences reasoning on
+-        # LM Studio; the OpenAI-compatible payload below merely requests it.
+         try:
+             answer = _request_json(native_root + "/api/v1/chat", native_payload, api_key, timeout)
+         except RuntimeError as exc:
+@@ -204,3 +298,6 @@ def _completion(root: str, model: str, messages: list[dict], api_key: str,
+         else:
+             _record_native_chat_support(native_root, True)
++            instance_id = str(answer.get("model_instance_id", answer.get("modelInstanceId", ""))).strip()
++            if instance_id and on_model_instance_id:
++                on_model_instance_id(instance_id)
+             content = _native_chat_content(answer)
+@@ -213,8 +307,8 @@ def _completion(root: str, model: str, messages: list[dict], api_key: str,
+         "max_tokens": int(max_tokens),
+         "stream": False,
+     }
+-    if disable_thinking:
+-        payload["chat_template_kwargs"] = {"enable_thinking": False}
+-        payload["reasoning_effort"] = "low"
+     response = _request_json(root + "/chat/completions", payload, api_key, timeout)
++    response_instance_id = str(response.get("model_instance_id", response.get("modelInstanceId", ""))).strip()
++    if response_instance_id and on_model_instance_id:
++        on_model_instance_id(response_instance_id)
+     try:
+@@ -378,6 +378,7 @@ def enhance_prompt_with_completion(
+     # lora_trigger_words to keep the append-only trailing order the compatibility test pins.
+     creative_latitude: str | None = None,
+     lora_trigger_words: str = "",
++    system_prompt_override: str = "",
+ ) -> tuple[str, dict, dict]:
+     """Apply the common MiniMax guide, normalization, validation, and repair loop."""
+     basic_prompt = str(basic_prompt).strip()
+@@ -498,10 +499,12 @@ def enhance_prompt_with_completion(
+         ) if part
+     )
+     base_messages = [
+-        {"role": "system", "content": system_prompt_for_mode(
+-            resolved_mode,
+-            "verbatim_source" if creative_latitude == "verbatim_source" else bool(enhance_description),
+-            invent_scene)},
++        {"role": "system", "content": (
++            system_prompt_override if system_prompt_override != "" else system_prompt_for_mode(
++                resolved_mode,
++                "verbatim_source" if creative_latitude == "verbatim_source" else bool(enhance_description),
++                invent_scene)
++        )},
+         {"role": "user", "content": user_request},
+     ]
+     messages = list(base_messages)
+@@ -838,9 +841,10 @@ def enhance_prompt(basic_prompt: str, mode: str, duration_seconds: float,
+                    delivery_target: str = "local",
+                    dialogue_language: str = "auto",
+                    editing_intent: str = "none",
+-                   invent_scene: bool = False,
+-                   creative_latitude: str | None = None,
+-                   lora_trigger_words: str = "") -> tuple[str, dict, dict]:
++                    invent_scene: bool = False,
++                    creative_latitude: str | None = None,
++                    lora_trigger_words: str = "",
++                    system_prompt_override: str = "") -> tuple[str, dict, dict]:
+     basic_prompt = str(basic_prompt).strip()
+     if not basic_prompt:
+         raise ValueError("basic_prompt cannot be empty")
+@@ -847,9 +850,14 @@ def enhance_prompt(basic_prompt: str, mode: str, duration_seconds: float,
+     root = _api_root(endpoint)
+     _require_allowed_endpoint(root, bool(allow_remote_endpoint))
+     secret = str(api_key).strip() or os.getenv("MINIMAX_H3_PROMPT_ENHANCER_API_KEY", "")
+-    selected_model = _model_name(root, model, secret, int(timeout))
++    selected_model = _model_name(root, model, secret, int(timeout), bool(allow_remote_endpoint))
++    instance_ids = set()
++
++    def record_instance_id(instance_id: str) -> None:
++        instance_ids.add(str(instance_id).strip())
+ 
+     def complete(messages: list[dict]) -> str:
+         return _completion(
+-            root, selected_model, messages, secret, temperature, max_tokens, timeout, disable_thinking
++            root, selected_model, messages, secret, temperature, max_tokens, timeout, disable_thinking,
++            on_model_instance_id=record_instance_id
+         )
+@@ -857,3 +861,3 @@ def enhance_prompt(basic_prompt: str, mode: str, duration_seconds: float,
+-    return enhance_prompt_with_completion(
++    enhanced, validation, result_manifest = enhance_prompt_with_completion(
+         basic_prompt,
+         mode,
+@@ -894,4 +898,14 @@ def enhance_prompt(basic_prompt: str, mode: str, duration_seconds: float,
+         invent_scene,
+         creative_latitude=creative_latitude,
+         lora_trigger_words=lora_trigger_words,
++        system_prompt_override=system_prompt_override,
+     )
++    if len(instance_ids) > 1:
++        raise RuntimeError("LM Studio returned more than one model instance during prompt generation without identifying the instance actually used; H3 was not queued.")
++    instance_id = next(iter(instance_ids), "")
++    if not instance_id:
++        instance_id = _loaded_instance_id(root, selected_model, secret, int(timeout))
++    result_manifest = dict(result_manifest)
++    result_manifest["modelId"] = selected_model
++    result_manifest["modelInstanceId"] = instance_id
++    return enhanced, validation, result_manifest
+diff --git a/prompt_enhancer_node.py b/prompt_enhancer_node.py
+index e176acb..d5cc637 100644
+--- a/prompt_enhancer_node.py
++++ b/prompt_enhancer_node.py
+@@ -6,6 +6,9 @@ from __future__ import annotations
+ import hashlib
+ import json
+ import math
++import time
++import threading
++import urllib.request
+ 
+ 
+ DEFAULT_LOCAL_CONTEXT_SIZE = 32768
+@@ -135,6 +138,6 @@ try:
+     )
+     from .creative_treatments import CREATIVE_TREATMENT_SCHEMA_VERSION, VISUAL_LANGUAGE_PROFILES
+-    from .prompt_enhancer import enhance_prompt
++    from .prompt_enhancer import PROMPT_ENGINE_MODEL_ID, enhance_prompt
+     from .media_manifest import ASPECT_RATIOS, MAX_GENERATION_SECONDS, generation_profile, manifest_context, parse_media_manifest, parse_media_project
+     from .prompt_guides import ACOUSTIC_SPACE_CHOICES, ENHANCEMENT_PROFILES, DIALOGUE_COVERAGE_CHOICES, DIALOGUE_LANGUAGE_CHOICES, EDITING_INTENT_CHOICES, INSTRUMENTAL_STYLE_CHOICES, build_user_request, normalize_multishot_output, resolve_mode, system_prompt_for_mode, treatment_warning_report, validate_prompt
+     from .title_credits import TITLE_ENERGIES, TITLE_RECIPES, TITLE_RECIPE_DISABLED, append_title_lock, title_briefing
+@@ -147,6 +150,6 @@ except ImportError:  # pragma: no cover - direct test/import compatibility
+     )
+     from creative_treatments import CREATIVE_TREATMENT_SCHEMA_VERSION, VISUAL_LANGUAGE_PROFILES
+-    from prompt_enhancer import enhance_prompt
++    from prompt_enhancer import PROMPT_ENGINE_MODEL_ID, enhance_prompt
+     from media_manifest import ASPECT_RATIOS, MAX_GENERATION_SECONDS, generation_profile, manifest_context, parse_media_manifest, parse_media_project
+     from prompt_guides import ACOUSTIC_SPACE_CHOICES, ENHANCEMENT_PROFILES, DIALOGUE_COVERAGE_CHOICES, DIALOGUE_LANGUAGE_CHOICES, EDITING_INTENT_CHOICES, INSTRUMENTAL_STYLE_CHOICES, build_user_request, normalize_multishot_output, resolve_mode, system_prompt_for_mode, treatment_warning_report, validate_prompt
+     from title_credits import TITLE_ENERGIES, TITLE_RECIPES, TITLE_RECIPE_DISABLED, append_title_lock, title_briefing
+@@ -371,13 +374,15 @@ class MiniMaxH3PromptGuideBuilder:
+         )
+ 
+ 
++_LM_STUDIO_ENHANCEMENT_LOCK = threading.Lock()
++
+ class MiniMaxH3PromptEnhancer:
+     CATEGORY = "MiniMax H3/Prompting"
+     FUNCTION = "enhance_with_ui"
+-    RETURN_TYPES = ("STRING", "STRING", "STRING", "FLOAT", "STRING", "STRING", "INT", "INT")
++    RETURN_TYPES = ("STRING", "STRING", "STRING", "FLOAT", "STRING", "STRING", "INT", "INT", "STRING", "STRING")
+     RETURN_NAMES = (
+         "enhanced_prompt", "validation_report", "enhancement_manifest", "duration_seconds", "aspect_ratio",
+-        "treatment_warnings", "width", "height",
++        "treatment_warnings", "width", "height", "llm_model_id", "llm_instance_id",
+     )
+     DESCRIPTION = (
+         "Rewrite a basic request into MiniMax H3's documented structure through an OpenAI-compatible endpoint "
+@@ -395,8 +395,9 @@ class MiniMaxH3PromptEnhancer:
+-            "model": ("STRING", {"default": "", "tooltip": "Blank excludes embedding models and prefers a compact local instruct model from /v1/models"}),
++            "model": ("STRING", {"default": PROMPT_ENGINE_MODEL_ID, "tooltip": "Fixed autonomous prompt model qwen/qwen3.8-27b; legacy widget values are ignored."}),
+             "api_key": ("STRING", {"default": "", "password": True, "tooltip": API_KEY_TOOLTIP}),
+             "temperature": ("FLOAT", {"default": 0.2, "min": 0.0, "max": 2.0, "step": 0.05}),
+-            "max_tokens": ("INT", {"default": 8192, "min": 512, "max": 32768, "step": 256}),
+-            "timeout_seconds": ("INT", {"default": 300, "min": 10, "max": 1800, "step": 10}),
++            # max_tokens is an explicit completion budget; never derive it from context_size.
++            "max_tokens": ("INT", {"default": 8192, "min": 512, "max": 32768, "step": 256}),
++            "timeout_seconds": ("INT", {"default": 600, "min": 10, "max": 1800, "step": 10}),
+             "repair_attempts": ("INT", {"default": 2, "min": 0, "max": 4, "step": 1}),
+-            "disable_thinking": ("BOOLEAN", {"default": True, "tooltip": "Faster, cleaner structured output on Qwen thinking models"}),
++            "disable_thinking": ("BOOLEAN", {"default": True, "tooltip": "Legacy compatibility input; LM Studio reasoning and runtime configuration are not overridden."}),
+             "allow_remote_endpoint": ("BOOLEAN", {"default": False}),
+@@ -439,11 +443,13 @@ class MiniMaxH3PromptEnhancer:
+             "editing_intent": (list(EDITING_INTENT_CHOICES), {"default": "none", "tooltip": "Quick video editing intent preset for Ref2VA (Character Swap, Wardrobe Transfer, Voice/Dialogue Swap, Background Change, Motion Transfer, Custom Editing). Automatically enforces video editing summary and retention policies."}),
+             "lora_trigger_words": ("STRING", {"default": "", "placeholder": LORA_TRIGGER_PLACEHOLDER, "dynamicPrompts": False, "tooltip": "Trigger tokens for the LoRAs loaded elsewhere in the graph. Appended verbatim to the end of the description after enhancement and validation, so they never pass through the LLM and survive character for character."}),
+             "title_sequence_recipe": ([TITLE_RECIPE_DISABLED, *TITLE_RECIPES], {"default": TITLE_RECIPE_DISABLED, "tooltip": "Turn the enhancer into a cinematic titles and credits director. Existing workflows remain disabled."}),
+-            "title_sequence_energy": (list(TITLE_ENERGIES), {"default": "balanced", "tooltip": "Overall motion, lighting, and sound intensity. Readable holds always remain still."}),
+-            "title_text": ("STRING", {"multiline": True, "default": "", "placeholder": "Exact main title; line breaks create one stacked composition.", "dynamicPrompts": False}),
+-            "credit_lines": ("STRING", {"multiline": True, "default": "", "placeholder": "One card per line: Role | Name", "dynamicPrompts": False}),
+-            "title_placement": (["after credits", "before credits"], {"default": "after credits"}),
+-        }}
++             "title_sequence_energy": (list(TITLE_ENERGIES), {"default": "balanced", "tooltip": "Overall motion, lighting, and sound intensity. Readable holds always remain still."}),
++             "title_text": ("STRING", {"multiline": True, "default": "", "placeholder": "Exact main title; line breaks create one stacked composition.", "dynamicPrompts": False}),
++             "credit_lines": ("STRING", {"multiline": True, "default": "", "placeholder": "One card per line: Role | Name", "dynamicPrompts": False}),
++             "title_placement": (["after credits", "before credits"], {"default": "after credits"}),
++             # Append-only: ComfyUI stores widget values positionally.
++             "system_prompt_override": ("STRING", {"multiline": True, "default": "", "dynamicPrompts": False, "tooltip": "Blank uses the upstream mode system prompt; populated text is passed verbatim to LM Studio and every bounded repair attempt."}),
++         }}
+ 
+     @classmethod
+     def IS_CHANGED(cls, always_re_enhance=False, **kwargs):
+@@ -474,10 +477,10 @@ class MiniMaxH3PromptEnhancer:
+                 instrumental_style="none", acoustic_space="none", dialogue_coverage="off",
+                 always_re_enhance=False, delivery_target="local", dialogue_language="auto",
+                 visual_style_preset="none", target_megapixels=0.0, editing_intent="none",
+-                invent_scene=False, creative_latitude=None,
+-                lora_trigger_words="", title_sequence_recipe=TITLE_RECIPE_DISABLED,
+-                title_sequence_energy="balanced", title_text="", credit_lines="",
+-                title_placement="after credits"):
++                 invent_scene=False, creative_latitude=None,
++                 lora_trigger_words="", title_sequence_recipe=TITLE_RECIPE_DISABLED,
++                 title_sequence_energy="balanced", title_text="", credit_lines="",
++                 title_placement="after credits", system_prompt_override=""):
+         latitude_name = _resolved_latitude_name(creative_latitude, enhance_description, invent_scene)
+         enhance_description, invent_scene = _resolve_latitude(
+             creative_latitude, enhance_description, invent_scene)
+@@ -522,7 +528,8 @@ class MiniMaxH3PromptEnhancer:
+                                 dialogue_language, editing_intent)
++            with _LM_STUDIO_ENHANCEMENT_LOCK:
+-            prompt, validation, manifest = enhance_prompt(
+-                *remote_args, invent_scene=invent_scene, lora_trigger_words=lora_trigger_words,
+-                creative_latitude=latitude_name)
++                prompt, validation, manifest = enhance_prompt(
++                    *remote_args, invent_scene=invent_scene, lora_trigger_words=lora_trigger_words,
++                    creative_latitude=latitude_name, system_prompt_override=system_prompt_override)
+         else:
+             context_size, startup_timeout = _local_runtime_limits(context_size, startup_timeout)
+             local_args = (
+@@ -556,9 +556,11 @@ class MiniMaxH3PromptEnhancer:
+         if cards:
+             prompt = append_title_lock(prompt, cards)
+             manifest = dict(manifest)
+             manifest["titleSequence"] = {
+                 "recipe": title_sequence_recipe,
+                 "energy": title_sequence_energy,
+                 "cardCount": len(cards),
+             }
++        model_id = str(manifest.get("modelId", "")).strip()
++        instance_id = str(manifest.get("modelInstanceId", "")).strip()
+         return (
+@@ -565,11 +567,31 @@ class MiniMaxH3PromptEnhancer:
+             "\n".join(manifest.get("treatmentWarnings", ())),
+             width,
+             height,
++            model_id,
++            instance_id,
+         )
+ 
+     def enhance_with_ui(self, *args, **kwargs):
+         result = self.enhance(*args, **kwargs)
++        try:
++            enhancement_manifest = json.loads(result[2])
++        except (TypeError, json.JSONDecodeError):
++            enhancement_manifest = {}
++        structured_output = {
++            "schemaVersion": 1,
++            "enhanced_prompt": result[0],
++            "model_id": result[8],
++            "model_instance_id": result[9],
++            "enhancement_manifest": enhancement_manifest,
++            "repair_attempts_used": int(enhancement_manifest.get("repairAttemptsUsed") or 0),
++            "rewrite_diagnostics": {
++                "validation_report": result[1],
++                "diagnostics_digest": enhancement_manifest.get("diagnosticsDigest", ""),
++                "treatment_warnings": enhancement_manifest.get("treatmentWarnings", []),
++            },
++        }
+         return {
+             "ui": {"minimax_h3_diagnostics": _diagnostic_ui_payload(result[1], result[0], result[2])},
++            "proya_h3_structured_output": [json.dumps(structured_output, ensure_ascii=False, separators=(",", ":"))],
+             "result": result,
+         }
+@@ -950,4 +951,149 @@ class MiniMaxH3PromptValidator:
+                 "minimax_h3_diagnostics": _diagnostic_ui_payload(report, str(prompt)),
++                "proya_h3_structured_output": [json.dumps({
++                    "schemaVersion": 1,
++                    "prompt": str(prompt),
++                    "valid": bool(report["valid"]),
++                    "validation_report": report_text,
++                }, ensure_ascii=False, separators=(",", ":"))],
+             },
+             "result": (str(prompt), bool(report["valid"]), report_text),
+         }
++
++
++class MiniMaxH3PromptValidityGate:
++    """Hard-stop the graph when the upstream validator reports invalid output."""
++
++    CATEGORY = "MiniMax H3/Prompting"
++    FUNCTION = "gate"
++    RETURN_TYPES = ("STRING", "BOOLEAN", "STRING")
++    RETURN_NAMES = ("prompt", "valid", "validation_report")
++    DESCRIPTION = "Pass a validated H3 prompt forward or fail the ComfyUI execution before sampling."
++
++    @classmethod
++    def INPUT_TYPES(cls):
++        return {"required": {
++            "prompt": ("STRING", {"multiline": True, "default": "", "dynamicPrompts": False}),
++            "valid": ("BOOLEAN", {"default": False}),
++            "validation_report": ("STRING", {"multiline": True, "default": "", "dynamicPrompts": False}),
++        }}
++
++    def gate(self, prompt, valid, validation_report):
++        report = str(validation_report or "")
++        if not bool(valid):
++            raise ValueError("MiniMax H3 prompt validation failed; H3 sampling was blocked. " + report)
++        return str(prompt), True, report
++
++
++class MiniMaxH3UnloadLMStudioModel:
++    """Unload only the exact model instance emitted by the prompt enhancer."""
++
++    CATEGORY = "MiniMax H3/Prompting"
++    FUNCTION = "unload"
++    RETURN_TYPES = ("STRING", "BOOLEAN", "STRING", "BOOLEAN", "STRING", "STRING", "INT")
++    RETURN_NAMES = ("prompt", "valid", "validation_report", "unload_succeeded", "unload_error", "instance_id", "unload_duration_ms")
++    DESCRIPTION = "Call LM Studio's native unload endpoint for the exact prompt-model instance and verify it is gone."
++
++    @classmethod
++    def INPUT_TYPES(cls):
++        return {"required": {
++            "prompt": ("STRING", {"multiline": True, "default": "", "dynamicPrompts": False}),
++            "valid": ("BOOLEAN", {"default": False}),
++            "validation_report": ("STRING", {"multiline": True, "default": "", "dynamicPrompts": False}),
++            "endpoint": ("STRING", {"default": "http://127.0.0.1:1234/v1"}),
++            "model": ("STRING", {"default": PROMPT_ENGINE_MODEL_ID, "tooltip": "Fixed autonomous prompt model; the value emitted by MiniMaxH3PromptEnhancer is used."}),
++            "instance_id": ("STRING", {"default": "", "tooltip": "Exact loaded instance ID emitted by MiniMaxH3PromptEnhancer."}),
++            "unload": ("BOOLEAN", {"default": True}),
++        }}
++
++    @staticmethod
++    def _root(endpoint):
++        root = str(endpoint or "").rstrip("/")
++        return root[:-3] if root.lower().endswith("/v1") else root
++
++    @classmethod
++    def _json_request(cls, url, method="GET", body=None):
++        data = None if body is None else json.dumps(body).encode("utf-8")
++        request = urllib.request.Request(
++            url,
++            data=data,
++            method=method,
++            headers={"Accept": "application/json", **({"Content-Type": "application/json"} if data else {})},
++        )
++        with urllib.request.urlopen(request, timeout=20) as response:
++            raw = response.read().decode("utf-8")
++        return json.loads(raw) if raw.strip() else {}
++
++    @staticmethod
++    def _result(prompt, valid, validation_report, succeeded, error, instance_id, started_at):
++        duration_ms = max(0, int(round((time.monotonic() - started_at) * 1000)))
++        normalized_error = str(error).strip() if error else ""
++        normalized_instance_id = str(instance_id).strip() if instance_id else ""
++        result = (str(prompt), bool(valid), str(validation_report or ""), bool(succeeded), normalized_error, normalized_instance_id, duration_ms)
++        structured_output = {
++            "schemaVersion": 1,
++            "instance_id": normalized_instance_id or None,
++            "llm_instance_id": normalized_instance_id or None,
++            "unload_succeeded": bool(succeeded),
++            "unload_error": normalized_error or None,
++            "unload_duration_ms": duration_ms,
++        }
++        return {
++            "ui": {
++                "proya_h3_structured_output": [json.dumps(structured_output, ensure_ascii=False, separators=(",", ":"))],
++            },
++            "result": result,
++        }
++
++    def unload(self, prompt, valid, validation_report, endpoint, model, instance_id, unload):
++        started_at = time.monotonic()
++        target_instance_id = str(instance_id or "").strip()
++        resolved_instance_id = target_instance_id
++        try:
++            if not bool(valid):
++                raise ValueError("MiniMax H3 prompt validation failed; LM Studio unload was not attempted.")
++            if not bool(unload):
++                return self._result(prompt, True, validation_report, False, "Unload disabled by settings.", instance_id, started_at)
++            # Ignore legacy widget values; only the canonical prompt model is eligible.
++            selected_model = PROMPT_ENGINE_MODEL_ID
++            if not target_instance_id:
++                raise ValueError("LM Studio unload requires the exact instance ID emitted by the prompt enhancer.")
++            root = self._root(endpoint)
++            models = self._json_request(root + "/api/v1/models")
++            selected = next(
++                (
++                    item for item in models.get("models", [])
++                    if isinstance(item, dict)
++                    and str(item.get("key", item.get("model_key", ""))) == selected_model
++                ),
++                None,
++            )
++            if selected is None:
++                raise ValueError("LM Studio no longer reports the exact prompt model; refusing to unload another model.")
++            instances = selected.get("loaded_instances", [])
++            matching_instances = [
++                str(item.get("id", item.get("instance_id", ""))).strip()
++                for item in instances
++                if isinstance(item, dict) and str(item.get("id", item.get("instance_id", ""))).strip()
++            ]
++            if matching_instances != [target_instance_id]:
++                raise ValueError("LM Studio no longer reports exactly the prompt-model instance emitted by node 149.")
++            resolved_instance_id = target_instance_id
++            response = self._json_request(root + "/api/v1/models/unload", "POST", {"instance_id": target_instance_id})
++            if str(response.get("instance_id", target_instance_id)) != target_instance_id:
++                raise ValueError("LM Studio returned an unexpected unload instance ID.")
++            remaining = self._json_request(root + "/api/v1/models")
++            still_loaded = any(
++                isinstance(item, dict)
++                and str(item.get("key", item.get("model_key", ""))) == selected_model
++                and any(
++                    isinstance(candidate, dict)
++                    and str(candidate.get("id", candidate.get("instance_id", ""))) == target_instance_id
++                    for candidate in item.get("loaded_instances", [])
++                )
++                for item in remaining.get("models", [])
++            )
++            if still_loaded:
++                raise ValueError("LM Studio still reports the exact prompt-model instance after unload.")
++            return self._result(prompt, True, validation_report, True, "", resolved_instance_id, started_at)
++        except Exception as exc:
++            raise RuntimeError(f"LM Studio exact-instance unload failed for {resolved_instance_id or 'unknown'}: {exc}") from exc
+diff --git a/prompt_guides.py b/prompt_guides.py
+index 4b4fb1c..ecc2643 100644
+--- a/prompt_guides.py
++++ b/prompt_guides.py
+@@ -146,6 +146,11 @@ DIALOGUE_LANGUAGE_CHOICES = (
+     "Polish",
+     "Turkish",
+     "Hindi",
++    "Indonesian",
++    "Bahasa Indonesia",
++    "bahasa indonesia",
++    "Bahasa",
++    "id-ID",
+ )
+ EDITING_INTENT_CHOICES = (
+     "none",
+@@ -660,6 +665,11 @@ _SCENETRANS_CONTINUITY_RE = re.compile(
+ # not already produce the canonical <d>[Language] name need an entry. Cantonese stays Cantonese:
+ # folding it into Chinese would silently change the spoken language the user asked for.
+ _LANGUAGE_ALIASES = {
++    "indonesian": "Indonesian",
++    "bahasa indonesia": "Indonesian",
++    "bahasa": "Indonesian",
++    "id-id": "Indonesian",
++    "id_id": "Indonesian",
+     "catalonian": "Catalan",
+     "catalan": "Catalan",
+     "catalán": "Catalan",
+diff --git a/tests/test_prompt_enhancer_node.py b/tests/test_prompt_enhancer_node.py
+index 336a70c..15fbda9 100644
+--- a/tests/test_prompt_enhancer_node.py
++++ b/tests/test_prompt_enhancer_node.py
+@@ -8,7 +8,9 @@ from prompt_enhancer_node import (
+     MiniMaxH3GGUFPromptEnhancer,
+     MiniMaxH3PromptEnhancer,
+     MiniMaxH3PromptGuideBuilder,
++    MiniMaxH3UnloadLMStudioModel,
+     MiniMaxH3UnloadGGUFServer,
++    PROMPT_ENGINE_MODEL_ID,
+ )
+ 
+ 
+@@ -95,9 +97,11 @@ def test_main_enhancer_exposes_backend_toggle_and_duration_output(monkeypatch):
+     assert inputs["local_model"][0] == ["model.gguf"]
+     assert inputs["llama_server_path"][0] == ["llama-server"]
+     assert inputs["keep_server_loaded"][1]["default"] is False
+-    assert MiniMaxH3PromptEnhancer.RETURN_NAMES[-5:] == (
++    assert MiniMaxH3PromptEnhancer.RETURN_NAMES[-7:-2] == (
+         "duration_seconds", "aspect_ratio", "treatment_warnings", "width", "height",
+     )
+-    assert MiniMaxH3PromptEnhancer.RETURN_TYPES[-5:] == ("FLOAT", "STRING", "STRING", "INT", "INT")
++    assert MiniMaxH3PromptEnhancer.RETURN_NAMES[-2:] == ("llm_model_id", "llm_instance_id")
++    assert MiniMaxH3PromptEnhancer.RETURN_TYPES[-7:-2] == ("FLOAT", "STRING", "STRING", "INT", "INT")
++    assert MiniMaxH3PromptEnhancer.RETURN_TYPES[-2:] == ("STRING", "STRING")
+ 
+ 
+@@ -223,7 +227,7 @@ def test_always_re_enhance_is_appended_last_to_keep_saved_widget_order():
+         optional = node.INPUT_TYPES()["optional"]
+         expected_tail = ["always_re_enhance", "delivery_target", "dialogue_language", "visual_style_preset", "target_megapixels", "editing_intent", "lora_trigger_words"]
+         if node is MiniMaxH3PromptEnhancer:
+-            expected_tail += ["title_sequence_recipe", "title_sequence_energy", "title_text", "credit_lines", "title_placement"]
++            expected_tail += ["title_sequence_recipe", "title_sequence_energy", "title_text", "credit_lines", "title_placement", "system_prompt_override"]
+         assert list(optional)[-len(expected_tail):] == expected_tail
+         assert optional["always_re_enhance"][0] == "BOOLEAN"
+         assert optional["always_re_enhance"][1]["default"] is False
+@@ -289,3 +293,59 @@ def test_editing_intent_in_guide_builder():
+     assert "CHARACTER / ACTOR SWAP" in req
+     assert "weak_reference" in req
+     assert "[video editing + character swap]" in req or "character swap" in req.lower()
++
++
++def test_lm_studio_unload_uses_shared_model_constant_and_exact_instance(monkeypatch):
++    assert PROMPT_ENGINE_MODEL_ID == "qwen/qwen3.8-27b"
++    assert MiniMaxH3PromptEnhancer.INPUT_TYPES()["required"]["model"][1]["default"] == PROMPT_ENGINE_MODEL_ID
++    assert MiniMaxH3UnloadLMStudioModel.INPUT_TYPES()["required"]["model"][1]["default"] == PROMPT_ENGINE_MODEL_ID
++
++    exact_instance_id = "qwen-instance-used-for-rewrite"
++    unrelated_instance_id = "unrelated-loaded-instance"
++    observations = iter([
++        {
++            "models": [
++                {"key": "unrelated/model", "loaded_instances": [{"id": unrelated_instance_id}]},
++                {"key": PROMPT_ENGINE_MODEL_ID, "loaded_instances": [{"id": exact_instance_id}]},
++            ]
++        },
++        {
++            "models": [
++                {"key": "unrelated/model", "loaded_instances": [{"id": unrelated_instance_id}]},
++                {"key": PROMPT_ENGINE_MODEL_ID, "loaded_instances": []},
++            ]
++        },
++    ])
++    unload_requests = []
++
++    def fake_json_request(url, method="GET", body=None):
++        if method == "POST":
++            unload_requests.append((url, body))
++            return {"instance_id": exact_instance_id}
++        return next(observations)
++
++    monkeypatch.setattr(MiniMaxH3UnloadLMStudioModel, "_json_request", staticmethod(fake_json_request))
++    result = MiniMaxH3UnloadLMStudioModel().unload(
++        "validated prompt", True, '{"valid":true}', "http://127.0.0.1:1234/v1",
++        "unrelated/widget-value", exact_instance_id, True,
++    )
++
++    assert unload_requests == [
++        ("http://127.0.0.1:1234/api/v1/models/unload", {"instance_id": exact_instance_id})
++    ]
++    assert result["result"][3:6] == (True, "", exact_instance_id)
++    assert isinstance(result["result"][6], int)
++    telemetry = json.loads(result["ui"]["proya_h3_structured_output"][0])
++    assert telemetry["unload_succeeded"] is True
++    assert telemetry["unload_error"] is None
++    assert telemetry["instance_id"] == exact_instance_id
++    assert isinstance(telemetry["unload_duration_ms"], int)
++
++    disabled = MiniMaxH3UnloadLMStudioModel().unload(
++        "validated prompt", True, '{"valid":true}', "http://127.0.0.1:1234/v1",
++        PROMPT_ENGINE_MODEL_ID, exact_instance_id, False,
++    )
++    disabled_telemetry = json.loads(disabled["ui"]["proya_h3_structured_output"][0])
++    assert disabled_telemetry["unload_succeeded"] is False
++    assert disabled_telemetry["unload_error"] == "Unload disabled by settings."
++    assert isinstance(disabled_telemetry["unload_duration_ms"], int)

@@ -1,0 +1,31 @@
+{
+  "workflows/minimax-h3-api.json": {
+    "sha256": "ba51289ee2a4d77dcebf9081a45a9842e3994abd637b3a90f5dae48564177bb0",
+    "staleOccurrences": 0,
+    "node149TokenInputs": []
+  },
+  "release/h3-vram-handoff/win-unpacked/resources/workflows/minimax-h3-api.json": {
+    "sha256": "ba51289ee2a4d77dcebf9081a45a9842e3994abd637b3a90f5dae48564177bb0",
+    "staleOccurrences": 0,
+    "node149TokenInputs": []
+  },
+  "release/win-unpacked/resources/workflows/minimax-h3-api.json": {
+    "sha256": "ba51289ee2a4d77dcebf9081a45a9842e3994abd637b3a90f5dae48564177bb0",
+    "staleOccurrences": 0,
+    "node149TokenInputs": []
+  },
+  "appBundle": [
+    {
+      "file": "\\dist-electron\\main.cjs",
+      "obsoleteTokenOccurrences": 0
+    },
+    {
+      "file": "\\dist-electron\\preload.cjs",
+      "obsoleteTokenOccurrences": 0
+    },
+    {
+      "file": "\\dist\\assets\\index-CZ44NYWO.js",
+      "obsoleteTokenOccurrences": 0
+    }
+  ]
+}

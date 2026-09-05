@@ -11,5 +11,10 @@ export default defineConfig({
   sourcemap: true,
   clean: true,
   external: ['electron', 'sql.js'],
-  outExtension: () => ({ js: '.cjs' })
+  outExtension: () => ({ js: '.cjs' }),
+  // h3.ts is shared by the renderer and main-process contract builder. Keep
+  // its Vite-style ?raw Markdown import bundleable in the Electron build.
+  esbuildOptions(options) {
+    options.loader = { ...options.loader, '.md': 'text' };
+  }
 });

@@ -1,0 +1,233 @@
+{
+  "date": "2026-09-05",
+  "remotePromptId": "5e3d7ecd-f86c-4f3e-9a08-968d1e69d512",
+  "completed": true,
+  "executionStart": 1788579118828,
+  "executionSuccess": 1788579856397,
+  "saveVideoOutput": {
+    "images": [
+      {
+        "filename": "PROYA_H3_20260905033201_0_00001_.mp4",
+        "subfolder": "",
+        "type": "output"
+      }
+    ],
+    "animated": [
+      true
+    ]
+  },
+  "initialRunningSample": {
+    "vram_total": 34190458880,
+    "vram_free": 14203469043,
+    "torch_vram_total": 7046430720,
+    "torch_vram_free": 6855146739
+  },
+  "afterCompletionSample": {
+    "capturedAt": "2026-09-05T03:52:08.838Z",
+    "devices": [
+      {
+        "name": "cuda:0 NVIDIA GeForce RTX 5090 : cudaMallocAsync",
+        "type": "cuda",
+        "index": 0,
+        "vram_total": 34190458880,
+        "vram_free": 9982661576,
+        "torch_vram_total": 100663296,
+        "torch_vram_free": 59986888
+      }
+    ]
+  },
+  "releaseAttempts": [
+    {
+      "checkedAt": "2026-09-05T03:53:19.358Z",
+      "h3VramReleaseRequested": false,
+      "h3VramReleaseSucceeded": false,
+      "h3VramReleaseDurationMs": 10212,
+      "h3VramReleaseError": "H3 VRAM release failed: The operation was aborted due to timeout",
+      "h3VramBeforeRelease": null,
+      "h3VramAfterRelease": null
+    },
+    {
+      "checkedAt": "2026-09-05T03:54:36.534Z",
+      "h3VramReleaseRequested": false,
+      "h3VramReleaseSucceeded": false,
+      "h3VramReleaseDurationMs": 3007,
+      "h3VramReleaseError": "H3 VRAM release failed: The operation was aborted due to timeout",
+      "h3VramBeforeRelease": null,
+      "h3VramAfterRelease": null
+    },
+    {
+      "checkedAt": "2026-09-05T03:56:50.896Z",
+      "h3VramReleaseRequested": false,
+      "h3VramReleaseSucceeded": false,
+      "h3VramReleaseDurationMs": 3009,
+      "h3VramReleaseError": "H3 VRAM release failed: The operation was aborted due to timeout",
+      "h3VramBeforeRelease": null,
+      "h3VramAfterRelease": null
+    },
+    {
+      "checkedAt": "2026-09-05T04:02:00.773Z",
+      "h3VramReleaseRequested": true,
+      "h3VramReleaseSucceeded": true,
+      "h3VramReleaseDurationMs": 7208,
+      "h3VramReleaseError": null,
+      "h3VramBeforeRelease": {
+        "capturedAt": "2026-09-05T04:01:56.137Z",
+        "devices": [
+          {
+            "name": "cuda:0 NVIDIA GeForce RTX 5090 : cudaMallocAsync",
+            "type": "cuda",
+            "vramTotalBytes": 34190458880,
+            "vramFreeBytes": 9982661576,
+            "torchReservedBytes": 100663296
+          }
+        ]
+      },
+      "h3VramAfterRelease": {
+        "capturedAt": "2026-09-05T04:02:00.394Z",
+        "devices": [
+          {
+            "name": "cuda:0 NVIDIA GeForce RTX 5090 : cudaMallocAsync",
+            "type": "cuda",
+            "vramTotalBytes": 34190458880,
+            "vramFreeBytes": 32269926400,
+            "torchReservedBytes": 67108864
+          }
+        ]
+      }
+    }
+  ],
+  "firstQwenTokensPerSecond": [
+    124.80457321871584,
+    124.57718660558704
+  ],
+  "secondQwenTokensPerSecond": [
+    68.84414043814965,
+    131.78837025652524,
+    131.97093402428555
+  ],
+  "newH3RendersSubmitted": 0,
+  "secondQwenSubmitted": true,
+  "classification": "ComfyUI/H3 retained VRAM: the native release returned 20.76 GiB of device memory and the following Qwen prompt completed normally, reaching 131.79–131.97 tokens/sec on later responses versus the provided baseline of 124.58–124.80 tokens/sec. Its first response after reload was 68.84 tokens/sec; model load took 13.12 seconds separately. No LM Studio configuration, Qwen inputs, prompt timeout, or H3 generation settings were changed.",
+  "firstQwenSource": "User-supplied LM Studio logs, 2026-09-05 11:32:29 and 11:32:34 on execution PC",
+  "firstQwenInputTokens": 6263,
+  "firstQwenOutputTokensPerResponse": 633,
+  "firstQwenTimeToFirstTokenSeconds": [
+    0.6703830000000001,
+    0.120242
+  ],
+  "nativeReleaseVerified": true,
+  "nativeReleaseDurationMs": 7208,
+  "freeVramIncreaseBytes": 22287264824,
+  "secondPromptPrepared": true,
+  "secondPromptGraphNodes": [
+    "147",
+    "148",
+    "149",
+    "150",
+    "151",
+    "152",
+    "153",
+    "99991"
+  ],
+  "packageVerification": {
+    "lifecycleStage": true,
+    "releaseBody": true,
+    "deviceHeadroom": true,
+    "serializedSubmission": true,
+    "qwenFixed": true,
+    "workflowUnchanged": true,
+    "systemPromptUnchanged": true
+  },
+  "secondPromptSubmission": {
+    "promptId": "0f6146d2-5530-4113-9deb-52e41362dd63",
+    "clientId": "477aef43-3795-4085-bd03-1b593fe1f7ea",
+    "startedAt": "2026-09-05T04:10:25.209Z",
+    "originalId": "5e3d7ecd-f86c-4f3e-9a08-968d1e69d512",
+    "nodeIds": [
+      "147",
+      "148",
+      "149",
+      "150",
+      "151",
+      "152",
+      "153",
+      "99991"
+    ],
+    "llmInputsUnchanged": true,
+    "h3RenderIncluded": false
+  },
+  "secondPromptResult": {
+    "promptId": "0f6146d2-5530-4113-9deb-52e41362dd63",
+    "completed": true,
+    "status": "success",
+    "elapsedMs": 45255,
+    "promptStageDurationMs": 35121,
+    "tokenThroughputAvailable": false,
+    "outputNodes": [
+      "149",
+      "150",
+      "152",
+      "99991"
+    ],
+    "errors": []
+  },
+  "secondPromptExactInstanceUnload": {
+    "succeeded": true,
+    "instanceId": "qwen/qwen3.8-27b",
+    "durationMs": 6486,
+    "error": null
+  },
+  "postReleaseDownload": {
+    "output": {
+      "nodeId": "92",
+      "kind": "video",
+      "filename": "PROYA_H3_20260905033201_0_00001_.mp4",
+      "subfolder": "",
+      "type": "output",
+      "url": "https://comfy.proyaofficial.com/view?filename=PROYA_H3_20260905033201_0_00001_.mp4&subfolder=&type=output"
+    },
+    "localPath": "C:\\Data\\proya-creative-studio\\release\\h3-vram-handoff\\canary\\downloads\\PROYA_H3_20260905033201_0_00001_.mp4",
+    "downloadedAt": "2026-09-05T04:12:18.492Z",
+    "sizeBytes": 2711239,
+    "mp4FileTypeBox": true
+  },
+  "secondQwenSource": "User-supplied LM Studio logs, 2026-09-05 12:10:47, 12:10:52, and 12:10:57 China time, matching the observed prompt-only run",
+  "secondQwenResponses": [
+    {
+      "at": "2026-09-05 12:10:47",
+      "inputTokens": 5496,
+      "outputTokens": 637,
+      "reasoningOutputTokens": 0,
+      "tokensPerSecond": 68.84414043814965,
+      "timeToFirstTokenSeconds": 2.156809,
+      "modelLoadTimeSeconds": 13.12
+    },
+    {
+      "at": "2026-09-05 12:10:52",
+      "inputTokens": 6267,
+      "outputTokens": 637,
+      "reasoningOutputTokens": 0,
+      "tokensPerSecond": 131.78837025652524,
+      "timeToFirstTokenSeconds": 0.637521
+    },
+    {
+      "at": "2026-09-05 12:10:57",
+      "inputTokens": 6267,
+      "outputTokens": 637,
+      "reasoningOutputTokens": 0,
+      "tokensPerSecond": 131.97093402428555,
+      "timeToFirstTokenSeconds": 0.11080899999999999
+    }
+  ],
+  "validationStatus": "Complete",
+  "localValidation": {
+    "testsPassed": 253,
+    "testFilesPassed": 19,
+    "targetedLintPassed": true,
+    "typecheckPassed": true,
+    "windowsBuildPassed": true,
+    "buildCommand": "npm run build -- --config.directories.output=release/h3-vram-handoff",
+    "defaultBuildDirectoryBlockedBy": "EBUSY: release/win-unpacked was locked",
+    "executable": "C:/Data/proya-creative-studio/release/h3-vram-handoff/win-unpacked/PROYA Creative Studio.exe"
+  }
+}

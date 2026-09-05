@@ -31,7 +31,17 @@ function createRenderWindow() {
 }
 
 async function captureIcon(window, size) {
-  const captured = await window.webContents.capturePage();
+  let captured;
+  for (let attempt = 0; attempt < 3; attempt += 1) {
+    try {
+      captured = await window.webContents.capturePage();
+      break;
+    } catch (error) {
+      if (attempt === 2) throw error;
+      await new Promise((resolveDelay) => setTimeout(resolveDelay, 100 * (attempt + 1)));
+    }
+  }
+  if (!captured) throw new Error('Icon capture returned no image');
   const normalized = captured.getSize().width === renderSize && captured.getSize().height === renderSize
     ? captured
     : captured.resize({ width: renderSize, height: renderSize, quality: 'best' });
