@@ -484,7 +484,7 @@ class MiniMaxH3PromptEnhancer:
                  invent_scene=False, creative_latitude=None,
                  lora_trigger_words="", title_sequence_recipe=TITLE_RECIPE_DISABLED,
                  title_sequence_energy="balanced", title_text="", credit_lines="",
-                 title_placement="after credits", system_prompt_override="", max_tokens=0):
+                 title_placement="after credits", system_prompt_override=""):
         latitude_name = _resolved_latitude_name(creative_latitude, enhance_description, invent_scene)
         enhance_description, invent_scene = _resolve_latitude(
             creative_latitude, enhance_description, invent_scene)

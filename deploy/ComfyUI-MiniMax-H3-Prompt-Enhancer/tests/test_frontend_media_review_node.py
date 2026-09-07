@@ -15,8 +15,10 @@ def test_compact_node_keeps_the_canonical_eight_output_contract():
         "aspect_ratio", "treatment_warnings", "width", "height",
     )
     for node_class in (MiniMaxH3PromptEnhancer, MiniMaxH3GGUFPromptEnhancer):
-        assert node_class.RETURN_TYPES == expected_types
-        assert node_class.RETURN_NAMES == expected_names
+        telemetry_types = ("STRING", "STRING") if node_class is MiniMaxH3PromptEnhancer else ()
+        telemetry_names = ("llm_model_id", "llm_instance_id") if node_class is MiniMaxH3PromptEnhancer else ()
+        assert node_class.RETURN_TYPES == (*expected_types, *telemetry_types)
+        assert node_class.RETURN_NAMES == (*expected_names, *telemetry_names)
 
 
 def test_node_frontend_groups_controls_without_new_persistent_widgets():

@@ -68,7 +68,7 @@ def _appended_fields(node_class):
         "lora_trigger_words",
     ]
     if node_class is MiniMaxH3PromptEnhancer:
-        fields.extend(TITLE_FIELDS)
+        fields.extend([*TITLE_FIELDS, "system_prompt_override", "max_tokens"])
     return fields
 
 
@@ -100,6 +100,11 @@ def test_new_serialized_inputs_are_appended_after_every_legacy_node_input():
     for name, node_class in classes.items():
         current = _input_names(node_class)
         legacy = [LEGACY_RENAMES.get(field, field) for field in fixture["nodes"][name]]
+        if node_class is MiniMaxH3PromptEnhancer:
+            # PROYA's existing contract lets LM Studio own the default output limit.
+            legacy.remove("max_tokens")
+            assert "max_tokens" not in node_class.INPUT_TYPES()["required"]
+            assert node_class.INPUT_TYPES()["optional"]["max_tokens"][1]["default"] == 0
         assert current[:len(legacy)] == legacy
         assert current[len(legacy):] == _appended_fields(node_class)
 
@@ -157,7 +162,7 @@ def test_existing_outputs_keep_their_positions_and_new_outputs_are_appended():
         "enhanced_prompt", "validation_report", "enhancement_manifest", "duration_seconds", "aspect_ratio",
         "treatment_warnings", "width", "height",
     )
-    assert MiniMaxH3PromptEnhancer.RETURN_NAMES == expected_enhancer_outputs
+    assert MiniMaxH3PromptEnhancer.RETURN_NAMES == (*expected_enhancer_outputs, "llm_model_id", "llm_instance_id")
     assert MiniMaxH3GGUFPromptEnhancer.RETURN_NAMES == expected_enhancer_outputs
     assert MiniMaxH3ShotSelector.RETURN_NAMES == (
         "shot_prompt", "timeline_body", "shot_description", "shot_id", "shot_count", "autonomous",
@@ -182,6 +187,10 @@ def test_low_level_and_node_signatures_append_only_optional_neutral_fields():
             parameter for parameter in inspect.signature(callable_).parameters.values()
             if parameter.name != "self"
         ]
+        if callable_ in (prompt_enhancer.enhance_prompt, prompt_enhancer.enhance_prompt_with_completion, MiniMaxH3PromptEnhancer.enhance):
+            assert parameters[-1].name == "system_prompt_override"
+            assert parameters[-1].default == ""
+            parameters = parameters[:-1]
         # creative_latitude replaced the enhance_description/invent_scene pair. It defaults to
         # None so an API caller that still passes the old flags keeps its exact behaviour, which
         # is what this test exists to guarantee.
@@ -251,7 +260,8 @@ def test_legacy_main_node_positional_call_still_reaches_remote_backend(monkeypat
     )
     assert result[0] == "prompt"
     assert captured["args"][-5:] == (True, "auto", "follow_prompt", "audible", "")
-    assert result[-3:] == ("", 1280, 720)
+    assert result[5:8] == ("", 1280, 720)
+    assert result[8:] == ("", "")
 
 
 def test_legacy_specialized_gguf_node_positional_call_still_reaches_backend(monkeypatch):

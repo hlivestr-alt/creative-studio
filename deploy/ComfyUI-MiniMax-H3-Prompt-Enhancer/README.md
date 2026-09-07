@@ -26,7 +26,7 @@ This node pack transforms simple natural language ideas and multimodal reference
 |---|---|---|
 | **H3 Prompt Contracts** | Single unstructured block | **Strict 6-Block Anatomy** (Ref2VA) & **3-Block Structure** (T2VA/I2VA/FL2VA/L2VA) |
 | **Dialogue Fidelity** | Translates or paraphrases quotes | **100% Verbatim Spoken Dialogue** in `<d>[Language] ...</d>` blocks |
-| **Multilingual & Dialects** | Generic or broken `[Original language]` | **17 Canonical Languages + 88 Dialect Aliases** (Castilian, Québécois, Flemish, etc.) |
+| **Multilingual & Dialects** | Generic or broken `[Original language]` | **22 Canonical Languages + 93 Dialect Aliases** (Castilian, Québécois, Flemish, etc.) |
 | **Audio Reference Binding** | Treated as background noise | **Cross-Modal Voice Binding** (`<Audio N>` $\rightarrow$ `<Subject N> (Sx)`) |
 | **Visual Text vs Speech** | Signs converted into dialogue | **Intelligent Separation** of signs/shirts/doors from spoken character dialogue |
 | **Titles & Credits** | Loose text requests and unstable spelling | **Seven deterministic cinematic recipes**, timed readable holds, exact text lock, hierarchy, fit checks, and final-frame preservation |
@@ -280,7 +280,7 @@ Spoken dialogue is preserved verbatim in its natural language while all structur
 ```text
 The woman (S1) says in Spanish from Spain: <d>[Spanish] Hola, cariño, ¿quieres un baile privado?</d>.
 ```
-Supports 17 canonical languages and 88 regional dialect aliases (Castilian, Québécois, Flemish, Austrian German, Brazilian Portuguese, Cantonese, etc.).
+Supports 22 canonical languages and 93 regional dialect aliases (Castilian, Québécois, Flemish, Austrian German, Brazilian Portuguese, Cantonese, etc.).
 
 ### Cross-Modal Audio Reference Binding
 Binds audio tracks (`<Audio 1>`, `<Audio 2>`) directly to character identities (`(S1)`, `(S2)`):

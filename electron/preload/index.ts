@@ -1,8 +1,17 @@
+import type { AutoH3Config, AutoH3Snapshot } from '../../src/domain/auto-h3';
 import { contextBridge, ipcRenderer, webUtils } from 'electron';
 import type { AppSettings, ChatPanelBounds, ComfyOutputFile, ComputeJobState, H3PromptEngineSettings, H3PromptEngineStatus, H3PromptInput, H3PromptRecord, H3PromptUpdate, H3WorkflowSettings, HistoryInput, HistoryRecord, HistoryUpdate, RemoteComfySystemInfo, RemoteH3GenerationRequest, RemoteH3JobRecord } from '../../src/domain/types';
 import { windowChannels, type WindowState } from '../../src/domain/window';
 
 const api = {
+  autoH3: {
+    snapshot: (): Promise<AutoH3Snapshot> => ipcRenderer.invoke('auto-h3:snapshot'),
+    start: (config: AutoH3Config): Promise<AutoH3Snapshot> => ipcRenderer.invoke('auto-h3:start', config),
+    resume: (id: string): Promise<AutoH3Snapshot> => ipcRenderer.invoke('auto-h3:resume', id),
+    stop: (id: string, immediately = false): Promise<AutoH3Snapshot> => ipcRenderer.invoke('auto-h3:stop', id, immediately),
+    cancelDownload: (id: string): Promise<AutoH3Snapshot> => ipcRenderer.invoke('auto-h3:cancel-download', id),
+    pickFolder: (): Promise<string | null> => ipcRenderer.invoke('auto-h3:pick-folder')
+  },
   history: {
     list: (limit?: number): Promise<HistoryRecord[]> => ipcRenderer.invoke('history:list', limit),
     create: (input: HistoryInput): Promise<HistoryRecord> => ipcRenderer.invoke('history:create', input),

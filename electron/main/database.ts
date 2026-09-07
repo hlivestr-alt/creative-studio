@@ -1,5 +1,5 @@
 import initSqlJs, { type Database, type SqlJsStatic } from "sql.js";
-import { existsSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, readFileSync, writeFileSync, renameSync } from "node:fs";
 import { createRequire } from "node:module";
 import type {
   CaptionMode,
@@ -16,6 +16,8 @@ import type {
   RequestedSlideCount,
 } from "../../src/domain/types";
 import { normalizeH3LockedProductPlateMode } from "../../src/domain/locked-product-plate";
+
+import type { AutoH3Session, AutoH3Job } from "../../src/domain/auto-h3";
 
 const localRequire = createRequire(__filename);
 
@@ -575,6 +577,8 @@ export class HistoryDatabase {
       ? new SQL.Database(readFileSync(path))
       : new SQL.Database();
     this.database.run(`
+      CREATE TABLE IF NOT EXISTS auto_h3_sessions (id TEXT PRIMARY KEY, json TEXT NOT NULL);
+      CREATE TABLE IF NOT EXISTS auto_h3_jobs (id TEXT PRIMARY KEY, json TEXT NOT NULL);
       CREATE TABLE IF NOT EXISTS creative_history (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         createdAt TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
@@ -831,6 +835,24 @@ export class HistoryDatabase {
     this.persist();
   }
 
+  listAutoSessions(): AutoH3Session[] {
+    return this.query<{ json: string }>("SELECT json FROM auto_h3_sessions ORDER BY rowid DESC").map(row => JSON.parse(row.json) as AutoH3Session);
+  }
+
+  listAutoJobs(): AutoH3Job[] {
+    return this.query<{ json: string }>("SELECT json FROM auto_h3_jobs ORDER BY rowid DESC").map(row => JSON.parse(row.json) as AutoH3Job);
+  }
+
+  saveAuto(session: AutoH3Session, job?: AutoH3Job): void {
+    this.database.run('BEGIN');
+    try {
+      this.database.run('INSERT OR REPLACE INTO auto_h3_sessions (id,json) VALUES (?,?)', [session.sessionId, JSON.stringify(session)]);
+      if (job) this.database.run('INSERT OR REPLACE INTO auto_h3_jobs (id,json) VALUES (?,?)', [job.autoJobId, JSON.stringify(job)]);
+      this.database.run('COMMIT');
+    } catch (error) { this.database.run('ROLLBACK'); throw error; }
+    this.persist();
+  }
+
   private query<T>(
     sql: string,
     params: Array<string | number | null> = [],
@@ -847,7 +869,8 @@ export class HistoryDatabase {
   }
 
   private persist(): void {
-    writeFileSync(this.path, Buffer.from(this.database.export()));
+    writeFileSync(`${this.path}.tmp`, Buffer.from(this.database.export()), { flush: true });
+    renameSync(`${this.path}.tmp`, this.path);
   }
 
   list(limit = 100): HistoryRecord[] {

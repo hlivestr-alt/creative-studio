@@ -1,5 +1,7 @@
-import { app, BrowserWindow, clipboard, ipcMain, net, protocol, screen, shell, WebContentsView } from 'electron';
-import { existsSync, writeFileSync } from 'node:fs';
+import { AutoH3Service } from './auto-h3-service';
+import type { AutoH3Config } from '../../src/domain/auto-h3';
+import { app, BrowserWindow, clipboard, dialog, ipcMain, net, protocol, screen, shell, WebContentsView } from 'electron';
+import { existsSync, mkdirSync, writeFileSync } from 'node:fs';
 import { dirname, join, normalize, resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { HistoryDatabase, loadSqlite } from './database';
@@ -18,6 +20,7 @@ let chatView: WebContentsView | null = null;
 let database: HistoryDatabase | null = null;
 let settingsStore: SettingsStore | null = null;
 let computeService: ComputeService | null = null;
+let autoH3Service: AutoH3Service | null = null;
 const referenceAuthorization = new ExplicitReferenceAuthorizationStore();
 let lastChatPanelBounds: ChatPanelBounds | null = null;
 const smokeOutput = process.argv.find((argument) => argument.startsWith('--smoke-test-output='))?.split('=').slice(1).join('=');
@@ -28,6 +31,12 @@ const smokeLongContent = process.argv.includes('--smoke-test-long-content');
 const smokeLayouts = process.argv.includes('--smoke-test-layouts');
 const smokeRoute = process.argv.find((argument) => argument.startsWith('--smoke-test-route='))?.split('=').slice(1).join('=');
 const smokeH3 = process.argv.includes('--smoke-test-h3');
+const smokeAutoH3 = process.argv.includes('--smoke-test-auto-h3');
+if (smokeOutput) {
+  const profile = join(dirname(resolve(smokeOutput)), 'smoke-profile');
+  mkdirSync(profile, { recursive: true });
+  app.setPath('userData', profile);
+}
 const smokeCarousel = process.argv.includes('--smoke-test-carousel');
 const smokePrepared = process.argv.includes('--smoke-test-prepared');
 const smokeChatVisible = process.argv.includes('--smoke-test-chat-visible');
@@ -132,7 +141,20 @@ function registerIpc(): void {
   ipcMain.handle('compute:test-connection', (_event, url: string) => computeService?.testConnection(url));
   ipcMain.handle('compute:test-prompt-engine', (_event, url: string, settings?: H3PromptEngineSettings) => computeService?.testPromptEngine(url, settings ?? currentSettings().h3PromptEngine));
   ipcMain.handle('compute:get-workflow-defaults', () => computeService?.getWorkflowDefaults());
-  ipcMain.handle('compute:submit-h3', (event, request: RemoteH3GenerationRequest) => computeService?.submitH3(request, event.sender.id));
+  ipcMain.handle('auto-h3:snapshot', () => autoH3Service?.snapshot());
+  ipcMain.handle('auto-h3:start', (_event, config: AutoH3Config) => autoH3Service?.start(config));
+  ipcMain.handle('auto-h3:resume', (_event, id: string) => autoH3Service?.resume(id));
+  ipcMain.handle('auto-h3:stop', (_event, id: string, immediately: boolean) => autoH3Service?.stop(id, immediately));
+  ipcMain.handle('auto-h3:cancel-download', (_event, id: string) => autoH3Service?.cancelDownload(id));
+  ipcMain.handle('auto-h3:pick-folder', async () => {
+    const result = await dialog.showOpenDialog({ properties: ['openDirectory', 'createDirectory'] });
+    return result.canceled ? null : result.filePaths[0];
+  });
+  ipcMain.handle('compute:submit-h3', (event, request: RemoteH3GenerationRequest) => {
+    if (autoH3Service?.snapshot().sessions.some(session => session.status !== 'STOPPED')) throw new Error('Stop the Auto Session before generating a single video.');
+    if (request.autoJobId) throw new Error('Auto jobs must be created by the scheduler.');
+    return computeService?.submitH3(request, event.sender.id);
+  });
   ipcMain.handle('compute:get-job-state', (_event, localJobId: string) => computeService?.getJobState(localJobId));
   ipcMain.handle('compute:list-jobs', (_event, limit?: number) => computeService?.listJobs(limit ?? 100) ?? []);
   ipcMain.handle('compute:download-result', (_event, localJobId: string) => computeService?.downloadResult(localJobId));
@@ -347,7 +369,7 @@ async function createWindow(): Promise<void> {
             hasSingleGenerateButton: root?.querySelectorAll('[aria-label="Generate H3 video"]').length === 1,
             hasRef2vaLock: text.includes('REF2VA'),
             hasPromptEngine: text.includes('Prompt Engine'),
-            hasStageRail: root?.querySelectorAll('.h3-stage').length === 9,
+            hasStageRail: root?.querySelectorAll('.h3-stage').length === 10,
             finalPromptIsReadonly: !root?.querySelector('.h3-final-prompt[contenteditable="true"]')
           };
         })()`).catch(() => null);
@@ -355,6 +377,22 @@ async function createWindow(): Promise<void> {
       } else {
         console.log('H3 smoke: route did not render');
       }
+    }
+
+    if (smokeAutoH3 && ready) {
+      await mainWindow.webContents.executeJavaScript("document.querySelector('.sidebar a[href=\"#/h3-video-prompts\"]')?.click()");
+      await waitForRendererSelector('.auto-h3-panel');
+      await mainWindow.webContents.executeJavaScript(`(() => {
+        const select = document.querySelector('[aria-label="H3 generation mode"]');
+        select.value = 'auto'; select.dispatchEvent(new Event('change', { bubbles: true }));
+      })()`);
+      await new Promise(resolveDelay => setTimeout(resolveDelay, 500));
+      console.log('Auto H3 smoke: ' + await mainWindow.webContents.executeJavaScript(`JSON.stringify({
+        start: document.querySelector('.auto-h3-panel')?.textContent.includes('START AUTO GENERATION'),
+        selected: document.querySelectorAll('.auto-selections input:checked').length,
+        overflow: document.querySelector('.auto-h3-panel').scrollWidth > document.querySelector('.auto-h3-panel').clientWidth
+      })`));
+      console.log(`Auto H3 smoke active sessions: ${autoH3Service?.snapshot().sessions.length}`);
     }
 
     if ((smokeCarousel || smokePrepared) && ready) {
@@ -392,6 +430,7 @@ app.whenReady().then(async () => {
   settingsStore = new SettingsStore(join(app.getPath('userData'), 'settings.json'), defaultSettings(root));
   database = new HistoryDatabase(join(app.getPath('userData'), 'proya-creative-studio.sqlite'), await loadSqlite());
   computeService = new ComputeService(currentSettings, (state) => mainWindow?.webContents.send('compute:job-state', state), !app.isPackaged, database, [join(root, 'product-assets'), join(root, 'references')], referenceAuthorization);
+  autoH3Service = new AutoH3Service(database, computeService, currentSettings);
   protocol.handle('proya-asset', (request) => {
     const url = new URL(request.url);
     const relative = normalize(`${url.host}${decodeURIComponent(url.pathname)}`).replace(/^[/\\]+/, '');
@@ -404,6 +443,7 @@ app.whenReady().then(async () => {
   screen.on('display-metrics-changed', requestChatBoundsRefresh);
   await createWindow();
   if (!smokeOutput) {
+    autoH3Service?.activate();
     void computeService?.restoreJobs().catch((reason) => {
       console.error(`Remote H3 job restore failed: ${reason instanceof Error ? reason.message : String(reason)}`);
     });
@@ -412,4 +452,4 @@ app.whenReady().then(async () => {
 });
 
 app.on('window-all-closed', () => { if (process.platform !== 'darwin') app.quit(); });
-app.on('before-quit', () => { computeService?.dispose(); database?.close(); });
+app.on('before-quit', () => { autoH3Service?.dispose(); computeService?.dispose(); database?.close(); });

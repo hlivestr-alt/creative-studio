@@ -1,3 +1,5 @@
+import { AmbiguousSubmissionError, remoteJobIdentity, submitExactlyOnce } from './auto-h3-transport';
+import { isTransientTransport } from '../../src/domain/auto-h3';
 import { createHash, randomInt, randomUUID } from 'node:crypto';
 import { existsSync, mkdirSync, readFileSync, realpathSync, renameSync, statSync, unlinkSync, writeFileSync } from 'node:fs';
 import { extname, isAbsolute, join, relative, resolve } from 'node:path';
@@ -49,7 +51,7 @@ export interface ComputeProvider {
   getJobState(remotePromptId: string): Promise<ComputeJobState>;
   watchJob(remotePromptId: string, onState: (state: ComputeJobState) => void): () => void;
   getOutputUrl(output: ComfyOutputFile): string;
-  downloadOutput(output: ComfyOutputFile, destinationDirectory: string): Promise<ComfyDownloadResult>;
+  downloadOutput(output: ComfyOutputFile, destinationDirectory: string, signal?: AbortSignal): Promise<ComfyDownloadResult>;
   assertQueueIdle(): Promise<void>;
   releaseH3Vram(remotePromptId: string, onRequested?: () => void): Promise<H3VramReleaseAudit>;
 }
@@ -865,18 +867,21 @@ export class RemoteComfyComputeProvider implements ComputeProvider {
       stage = 'H3_QUEUE_FAILED';
       const workflow = this.prepareWorkflow(template, effectiveRequest, resolution, remoteReferences);
       const clientId = randomUUID();
-      const submission = { prompt: workflow, client_id: clientId };
+      const submission = { prompt: workflow, client_id: clientId, ...(request.autoJobId ? { extra_data: { autoJobId: request.autoJobId, sessionId: request.autoSessionId, cycleNumber: request.autoCycleNumber, extra_pnginfo: { autoJobId: request.autoJobId, sessionId: request.autoSessionId, cycleNumber: request.autoCycleNumber } } } : {}) };
       const submissionJson = JSON.stringify(submission, null, 2);
-      const payload = await this.requestJson<ComfyPromptResponse>('/prompt', {
-        method: 'POST',
-        body: submissionJson
-      });
+      if (request.autoJobId) publish('submitted', { submissionJson, pipelineStage: 'QUEUED_H3' });
+      const post = () => this.requestJson<ComfyPromptResponse>('/prompt', { method: 'POST', body: submissionJson });
+      const payload = request.autoJobId ? await submitExactlyOnce(post, async () => {
+        const id = await this.reconcileAutoJob(request.autoJobId!);
+        return id ? { prompt_id: id } : null;
+      }) : await post();
       const responseError = payload.error;
       const nodeErrors = payload.node_errors;
-      if (responseError !== undefined && responseError !== null) throw new Error(`ComfyUI rejected the workflow: ${errorMessage(responseError)}`);
-      if ((Array.isArray(nodeErrors) && nodeErrors.length > 0) || (isRecord(nodeErrors) && Object.keys(nodeErrors).length > 0)) {
+      if (!(request.autoJobId && isCanonicalComfyPromptId(payload.prompt_id)) && responseError !== undefined && responseError !== null) throw new Error(`ComfyUI rejected the workflow: ${errorMessage(responseError)}`);
+      if (!(request.autoJobId && isCanonicalComfyPromptId(payload.prompt_id)) && ((Array.isArray(nodeErrors) && nodeErrors.length > 0) || (isRecord(nodeErrors) && Object.keys(nodeErrors).length > 0))) {
         throw new Error(`ComfyUI rejected one or more nodes: ${errorMessage(nodeErrors)}`);
       }
+      if (request.autoJobId && !isCanonicalComfyPromptId(payload.prompt_id)) throw new AmbiguousSubmissionError();
       const remotePromptId = requireCanonicalComfyPromptId(payload.prompt_id);
       this.clientIds.set(remotePromptId, clientId);
       if (effectiveRequest.promptEngine) this.promptEngineByPromptId.set(remotePromptId, effectiveRequest.promptEngine);
@@ -896,11 +901,15 @@ export class RemoteComfyComputeProvider implements ComputeProvider {
         lmStudioModelId: effectiveRequest.promptEngine?.model.trim() || null,
         temperature: effectiveRequest.promptEngine?.temperature ?? null,
         llmUnloadRequested: effectiveRequest.promptEngine?.unloadModelBeforeH3 ?? false,
-        submissionJson: this.includeSubmissionJson ? submissionJson : undefined
+        submissionJson: this.includeSubmissionJson || request.autoJobId ? submissionJson : undefined
       });
       onState?.(state);
       return state;
     } catch (reason) {
+      if (request.autoJobId && (reason instanceof AmbiguousSubmissionError || isTransientTransport(reason))) {
+        publish(reason instanceof AmbiguousSubmissionError ? 'submitted' : 'preparing', { connectionError: String(reason), pipelineStage: stage });
+        throw reason;
+      }
       const promptFailureStage = stage === 'WRITING_PROMPT' ? classifyH3PromptEngineError(errorMessage(reason)) : null;
       const failureStage: H3PipelineStage = stage === 'UPLOADING_REFERENCES'
         ? 'REFERENCE_UPLOAD_FAILED'
@@ -1055,7 +1064,17 @@ export class RemoteComfyComputeProvider implements ComputeProvider {
     return createOutputUrl(this.baseUrl, output);
   }
 
-  async downloadOutput(output: ComfyOutputFile, destinationDirectory: string): Promise<ComfyDownloadResult> {
+  async downloadOutput(output: ComfyOutputFile, destinationDirectory: string, signal?: AbortSignal): Promise<ComfyDownloadResult> {
+    return this.downloadFile(output, destinationDirectory, this.getOutputUrl(output), signal);
+  }
+
+  async downloadAutoArchive(output: ComfyOutputFile, root: string, relativePath: string, destinationDirectory: string, signal?: AbortSignal): Promise<ComfyDownloadResult> {
+    const url = new URL(endpointFor(this.baseUrl, '/proya/auto/archive/file'));
+    url.searchParams.set('root', root); url.searchParams.set('relativePath', relativePath);
+    return this.downloadFile(output, destinationDirectory, url.toString(), signal);
+  }
+
+  private async downloadFile(output: ComfyOutputFile, destinationDirectory: string, url: string, signal?: AbortSignal): Promise<ComfyDownloadResult> {
     if (!output.filename.trim()) throw new Error('ComfyUI output is missing a filename.');
     const directory = resolve(destinationDirectory);
     mkdirSync(directory, { recursive: true });
@@ -1075,12 +1094,14 @@ export class RemoteComfyComputeProvider implements ComputeProvider {
     }
     const temporaryPath = join(directory, `.${safeFilename}.${randomUUID()}.part`);
     try {
-      const response = await this.fetchImpl(this.getOutputUrl(output), { method: 'GET', headers: new Headers(authHeaders(this.auth)) });
+      const response = await this.fetchImpl(url, { method: 'GET', headers: new Headers(authHeaders(this.auth)), signal: signal ? AbortSignal.any([signal, AbortSignal.timeout(600000)]) : AbortSignal.timeout(600000) });
       if (!response.ok) {
         const detail = await response.text().catch(() => '');
         throw new Error(`ComfyUI output download failed (${response.status})${detail.trim() ? `: ${detail.trim()}` : ''}`);
       }
       const contents = Buffer.from(await response.arrayBuffer());
+      const expectedSize = Number(response.headers.get('content-length'));
+      if (!contents.length || expectedSize > 0 && contents.length !== expectedSize) throw new Error('Downloaded output size verification failed');
       writeFileSync(temporaryPath, contents);
       renameSync(temporaryPath, localPath);
       return { output, localPath, downloadedAt: new Date().toISOString() };
@@ -1104,7 +1125,7 @@ export class RemoteComfyComputeProvider implements ComputeProvider {
 
   private prepareWorkflow(template: ComfyApiWorkflow, request: RemoteH3GenerationRequest, resolution: H3Resolution, references: { firstFrame: string | null; lastFrame: string | null; productReference: string | null; referenceImages: string[] }): ComfyApiWorkflow {
     const seed = request.workflowSettings?.seed ?? request.seed ?? randomInt(0, 4_294_967_296);
-    const outputPrefix = `PROYA_H3_${new Date().toISOString().replace(/[^0-9]/g, '').slice(0, 14)}_${seed}`;
+    const outputPrefix = request.autoJobId ?? `PROYA_H3_${new Date().toISOString().replace(/[^0-9]/g, '').slice(0, 14)}_${seed}`;
     const promptEngine = request.promptEngine;
     return prepareH3ComfyWorkflow(template, {
       prompt: request.prompt,
@@ -1245,13 +1266,31 @@ export class RemoteComfyComputeProvider implements ComputeProvider {
     return { sourcePath, filename: combineComfyFilename(name, subfolder), subfolder, type };
   }
 
+  async reconcileAutoJob(identity: string): Promise<string | null> {
+    const [queue, history] = await Promise.all([this.requestJson('/queue'), this.requestJson('/history')]);
+    return remoteJobIdentity(queue, history, identity);
+  }
+
+  async archiveAutoOutput(output: ComfyOutputFile, root: string, relativePath: string): Promise<{ path: string; size: number }> {
+    return this.requestJson('/proya/auto/archive', { method: 'POST', body: JSON.stringify({ output, root, relativePath }) });
+  }
+
+  async testAutoArchive(root: string): Promise<void> {
+    await this.requestJson('/proya/auto/archive/check', { method: 'POST', body: JSON.stringify({ root }) });
+  }
+
+  async interruptAutoJob(remotePromptId: string): Promise<void> {
+    // The extension interrupts only when this exact prompt owns the GPU.
+    await this.requestJson('/proya/auto/interrupt', { method: 'POST', body: JSON.stringify({ promptId: remotePromptId }) });
+  }
+
   private async requestJson<T = unknown>(path: string, init: RequestInit = {}): Promise<T> {
     const headers = new Headers(init.headers);
     headers.set('Accept', 'application/json');
     const multipart = typeof FormData !== 'undefined' && init.body instanceof FormData;
     if (init.body !== undefined && !multipart) headers.set('Content-Type', 'application/json');
     for (const [key, value] of Object.entries(authHeaders(this.auth))) headers.set(key, value);
-    const response = await this.fetchImpl(endpointFor(this.baseUrl, path), { ...init, headers });
+    const response = await this.fetchImpl(endpointFor(this.baseUrl, path), { ...init, headers, signal: init.signal ?? AbortSignal.timeout(30000) });
     const text = await response.text();
     let payload: unknown = {};
     if (text.trim()) {
@@ -1297,16 +1336,15 @@ export class RemoteComfyComputeProvider implements ComputeProvider {
 
     let socket: ComfyWebSocket | null = null;
     let reconnectTimer: ReturnType<typeof setTimeout> | null = null;
-    let reconnectAttempts = 0;
+
     const publish = (next: Partial<ComputeJobState>) => {
       latest = { ...latest, ...next, updatedAt: new Date().toISOString() };
       onState(latest);
       terminal = latest.status === 'completed' || latest.status === 'failed' || latest.status === 'error';
     };
     const scheduleReconnect = () => {
-      if (terminal || signal.aborted || reconnectTimer || reconnectAttempts >= 8) return;
-      const delay = Math.min(5000, 500 * 2 ** reconnectAttempts);
-      reconnectAttempts += 1;
+      if (terminal || signal.aborted || reconnectTimer) return;
+      const delay = 5000;
       reconnectTimer = setTimeout(() => {
         reconnectTimer = null;
         connectSocket();
@@ -1314,11 +1352,11 @@ export class RemoteComfyComputeProvider implements ComputeProvider {
     };
     const connectSocket = () => {
       if (terminal || signal.aborted || !this.webSocketFactory || this.auth.type !== 'none') return;
-      const clientId = this.clientIds.get(remotePromptId);
-      if (!clientId) return;
+      const clientId = this.clientIds.get(remotePromptId) ?? randomUUID();
+      this.clientIds.set(remotePromptId, clientId);
       try {
         socket = this.webSocketFactory(websocketEndpointFor(this.baseUrl, clientId));
-        socket.onopen = () => { reconnectAttempts = 0; };
+        socket.onopen = () => { void this.getJobState(remotePromptId).then(state => publish({ ...state, progress: state.progress ?? latest.progress })).catch(reason => publish({ connectionError: errorMessage(reason) })); };
         socket.onmessage = (event) => this.handleSocketMessage(event.data, remotePromptId, publish);
         socket.onerror = () => { if (!terminal) scheduleReconnect(); };
         socket.onclose = () => { if (!terminal) scheduleReconnect(); };
@@ -1331,7 +1369,7 @@ export class RemoteComfyComputeProvider implements ComputeProvider {
     connectSocket();
     try {
       while (!terminal && !signal.aborted) {
-        await wait(this.pollIntervalMs, signal);
+        await wait(latest.connectionError ? 5000 : this.pollIntervalMs, signal);
         if (terminal || signal.aborted) break;
         try {
           const polled = await this.getJobState(remotePromptId);

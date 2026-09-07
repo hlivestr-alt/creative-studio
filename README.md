@@ -104,3 +104,7 @@ If embedded ChatGPT is unavailable or its website changes, use **Open in default
 ## V1 boundaries
 
 There is no OpenAI API key, API billing, laptop-side LLM, ChatGPT response scraping, hidden ChatGPT automation in H3, Instagram publishing/scheduling, Meta API, n8n, Google Drive, PostgreSQL, Docker, or remote desktop/filesystem dependency. Remote H3 is limited to the explicitly configured ComfyUI HTTP/WebSocket API; LM Studio remains loopback-only on the China execution PC. See [docs/h3-remote-autonomous-generation.md](docs/h3-remote-autonomous-generation.md) and [docs/remote-compute.md](docs/remote-compute.md).
+
+## Continuous Auto H3
+
+H3 now includes an ordered, persistent Auto Run mode with independent China archive and laptop download recovery. See [implementation and validation](docs/auto-h3-continuous-generation.md) and [China extension deployment](deploy/ComfyUI-MiniMax-H3-Prompt-Enhancer/AUTO-RUN.md). Starting the packaged app never automatically starts continuous generation.

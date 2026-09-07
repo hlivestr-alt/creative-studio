@@ -19,7 +19,7 @@ def test_enhancers_use_ui_wrapper_without_changing_direct_enhance_contract():
             "diagnostics": [{"code": "coach.action.opening_duplicate"}],
         },
     }
-    direct = ("prompt", json.dumps(validation), "{}", 8.0, "16:9", "", 1280, 720)
+    direct = ("prompt", json.dumps(validation), "{}", 8.0, "16:9", "", 1280, 720, "qwen/qwen3.8-27b", "test-exact-instance")
     enhancer = MiniMaxH3PromptEnhancer()
     enhancer.enhance = lambda *args, **kwargs: direct
 

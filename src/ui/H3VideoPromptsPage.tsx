@@ -1,3 +1,4 @@
+import { AutoH3Panel } from './AutoH3Panel';
 import { Cloud, Download, ExternalLink, FolderOpen, History, RefreshCw, Server, Sparkles } from 'lucide-react';
 import { useEffect, useMemo, useRef, useState, type ChangeEvent } from 'react';
 import {
@@ -171,6 +172,7 @@ function referenceRequests(plan: H3ReferencePlan, productAssetsDirectory: string
 }
 
 export function H3VideoPromptsPage() {
+  const [autoActive, setAutoActive] = useState(false);
   const { h3History, settings: appSettings, loading, createH3Prompt, updateH3Prompt, saveSettings } = useApp();
   const [brief, setBrief] = useState<H3VideoBrief>(() => createSimpleH3Brief(defaultProductId));
   const [generatedRecordId, setGeneratedRecordId] = useState<number | null>(null);
@@ -513,6 +515,7 @@ export function H3VideoPromptsPage() {
           <div><span className="eyebrow">Autonomous H3 video control plane</span><h1>MiniMax H3 Setup</h1><p>Write a compact creative brief on this laptop. Qwen and ComfyUI execute the prompt and video on the China RTX 5090 PC.</p></div>
           <span className="h3-header-badge"><Cloud size={14} /> Remote Qwen · REF2VA</span>
         </header>
+        <AutoH3Panel brief={brief} onActive={setAutoActive} />
 
         <div className="h3-boundary-note"><Server size={15} /><span>Creative Studio never calls LM Studio or writes final prompt text. The remote ComfyUI workflow owns enhancement, validation, unload, and H3 generation.</span></div>
 
@@ -528,7 +531,7 @@ export function H3VideoPromptsPage() {
 
         <PromptEngineSettings status={promptEngineStatus} testing={testingPromptEngine} onRefresh={() => void refreshPromptEngine()} />
 
-        <section className="h3-generate-panel"><div><span className="eyebrow">One-click autonomous pipeline</span><h2>Ready to generate?</h2><p>Creative Diversity runs first, then the remote graph writes, validates, unloads the exact prompt-model instance, and queues H3.</p></div><button className="h3-generate-button" type="button" aria-label="Generate H3 video" onClick={() => void generate()} disabled={!canGenerate || submitting}><Sparkles size={18} />{submitting ? 'Starting remote H3…' : 'Generate H3 video'}<span>→</span></button>{!productReferenceReady && <small className="h3-help">Select a product reference to enable generation.</small>}{!promptEngineStatus?.qwenReady && <small className="h3-help">Prompt Engine must be ready on the China execution PC.</small>}{error && <p className="error-note h3-error">{error}</p>}</section>
+        <section className="h3-generate-panel"><div><span className="eyebrow">One-click autonomous pipeline</span><h2>Ready to generate?</h2><p>Creative Diversity runs first, then the remote graph writes, validates, unloads the exact prompt-model instance, and queues H3.</p></div><button className="h3-generate-button" type="button" aria-label="Generate H3 video" onClick={() => void generate()} disabled={!canGenerate || submitting || autoActive}><Sparkles size={18} />{submitting ? 'Starting remote H3…' : 'Generate H3 video'}<span>→</span></button>{!productReferenceReady && <small className="h3-help">Select a product reference to enable generation.</small>}{!promptEngineStatus?.qwenReady && <small className="h3-help">Prompt Engine must be ready on the China execution PC.</small>}{error && <p className="error-note h3-error">{error}</p>}</section>
       </main>
 
       <aside className="h3-right-rail">

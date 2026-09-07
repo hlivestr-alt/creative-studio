@@ -274,6 +274,9 @@ export interface ComputeJobState extends H3VramReleaseAudit {
 }
 
 export interface RemoteH3GenerationRequest {
+  autoJobId?: string;
+  autoSessionId?: string;
+  autoCycleNumber?: number;
   /** @deprecated Legacy caller field. Autonomous H3 submits generationBrief instead. */
   prompt?: string;
   /** Structured brief consumed by the remote MiniMax H3 prompt-engine nodes. */

@@ -952,3 +952,29 @@ describe('RemoteComfyComputeProvider', () => {
     await expect(provider.submitH3({ prompt: 'x', mode: 'T2VA', duration: 4, aspectRatio: '9:16', fps: 24, frames: 107, megapixels: 0.5, multiple: 32, firstFrame: null, lastFrame: null, productReference: null })).rejects.toThrow(/Local mode/);
   });
 });
+
+
+describe('Auto H3 provider identity and lost response integration', () => {
+  it('persists submission identity before POST and adopts matching queue entry after disconnect', async () => {
+    const identity = 'h3-auto-test-session-cycle-product-content-unique';
+    let postCount = 0;
+    let posted: Record<string, unknown> = {};
+    const lifecycle: ComputeJobState[] = [];
+    const provider = new RemoteComfyComputeProvider({ baseUrl: 'https://comfy.example.test', workflowPath: join(process.cwd(), 'workflows/minimax-h3-api.json'), fetchImpl: async (input, init) => {
+      const url = String(input);
+      if (url.endsWith('/system_stats')) return new Response(JSON.stringify({ system: { comfyui_version: 'test' } }));
+      if (url.endsWith('/prompt')) {
+        postCount++; posted = JSON.parse(String(init?.body));
+        expect(lifecycle.some(s => s.submissionJson?.includes(identity))).toBe(true);
+        throw new Error('Cloudflare connection reset after acceptance');
+      }
+      if (url.endsWith('/queue')) return new Response(JSON.stringify({ queue_running: [[0, remotePromptId, posted.prompt, posted.extra_data]], queue_pending: [] }));
+      return new Response('{}');
+    } });
+    const result = await provider.submitH3(validRequest({ localJobId: identity, autoJobId: identity, autoSessionId: 'session', autoCycleNumber: 2 }), state => lifecycle.push(state));
+    expect(result.remotePromptId).toBe(remotePromptId);
+    expect(postCount).toBe(1);
+    expect(JSON.stringify(posted.prompt)).toContain(identity);
+    expect(posted.extra_data).toMatchObject({ autoJobId: identity, sessionId: 'session', cycleNumber: 2 });
+  });
+});

@@ -55,6 +55,9 @@ def test_every_backend_accepts_creative_latitude_with_the_same_tail():
         prompt_enhancer.enhance_prompt_with_completion,
     ):
         names = [p.name for p in inspect.signature(function).parameters.values()]
+        if function in (prompt_enhancer.enhance_prompt, prompt_enhancer.enhance_prompt_with_completion):
+            assert names[-1] == "system_prompt_override"
+            names = names[:-1]
         assert names[-4:] == tail, function.__name__
 
 

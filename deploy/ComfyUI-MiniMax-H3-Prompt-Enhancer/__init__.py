@@ -2,6 +2,7 @@
 """Standalone MiniMax H3 prompt enhancement nodes for ComfyUI."""
 
 if __package__:
+    from . import auto_routes as _auto_routes  # noqa: F401
     from . import api_routes as _api_routes  # noqa: F401 - registers same-origin frontend routes
     from .prompt_enhancer_node import (
         MiniMaxH3GGUFPromptEnhancer,

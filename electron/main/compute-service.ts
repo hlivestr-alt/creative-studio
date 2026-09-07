@@ -1,3 +1,5 @@
+import { AmbiguousSubmissionError } from './auto-h3-transport';
+import { isTransientTransport } from '../../src/domain/auto-h3';
 import { createHash, randomInt } from 'node:crypto';
 import { existsSync, readFileSync } from 'node:fs';
 import { isAbsolute, relative, resolve } from 'node:path';
@@ -113,6 +115,7 @@ function mergeState(previous: ComputeJobState | undefined, next: ComputeJobState
   return {
     ...previous,
     ...next,
+    submissionJson: next.submissionJson ?? previous.submissionJson,
     localJobId: next.localJobId ?? previous.localJobId,
     remotePromptId: next.remotePromptId ?? previous.remotePromptId,
     progress: next.progress ?? previous.progress,
@@ -239,6 +242,33 @@ export function readExactSystemPrompt(filePath: string): { text: string; hash: s
 }
 
 export class ComputeService {
+  autoArchive: ((request: RemoteH3GenerationRequest, state: ComputeJobState) => Promise<void>) | null = null;
+
+  autoProvider(): RemoteComfyComputeProvider { return this.providerForUrl(this.getSettings().remoteComfyUrl); }
+
+  async recoverAutoJob(localJobId: string): Promise<ComputeJobState | null> {
+    const record = this.findRecord(localJobId);
+    if (!record) return null;
+    if (!record.remotePromptId) {
+      if (isTerminal(record.state.status)) return record.state;
+      if (!record.state.submissionJson) return null;
+      const provider = this.providerForJob(record);
+      const remotePromptId = await provider.reconcileAutoJob(record.request.autoJobId ?? localJobId);
+      if (!remotePromptId) throw new AmbiguousSubmissionError();
+      const state = { ...record.state, ...await provider.getJobState(remotePromptId), localJobId, remotePromptId };
+      this.saveState(record.request, state, record.createdAt);
+      const adopted = this.findRecord(localJobId)!;
+      this.startWatcher(adopted, provider);
+    }
+    const latest = this.findRecord(localJobId)!;
+    const provider = this.providerForJob(latest);
+    if (!isTerminal(latest.state.status)) this.startWatcher(latest, provider);
+    if (isTerminal(latest.state.status) && latest.state.h3VramReleaseSucceeded !== true) {
+      return this.ensureH3VramReleased(latest, provider, latest.state, true);
+    }
+    return this.getJobState(localJobId);
+  }
+
   private readonly activeJobs = new Map<string, JobEntry>();
   private readonly lastStates = new Map<string, ComputeJobState>();
   private readonly records = new Map<string, RemoteH3JobRecord>();
@@ -317,6 +347,7 @@ export class ComputeService {
       .sort((a, b) => Date.parse(b.createdAt) - Date.parse(a.createdAt));
     for (const record of records) {
       const latest = this.lastStates.get(record.localJobId) ?? record.state;
+      if (record.request.autoJobId && !record.remotePromptId && !latest.submissionJson) continue;
       if (!isTerminal(latest.status)) {
         const reconciled = await this.getJobState(record.localJobId);
         if (!isTerminal(reconciled.status)) throw new Error('The previous H3 job is not finished. Wait for execution and VRAM release before starting Qwen.');
@@ -412,6 +443,12 @@ export class ComputeService {
       entry.stop = provider.watchJob(remotePromptId, (state) => { void this.handleJobState(entry, state); });
       return latest;
     } catch (reason) {
+      if (request.autoJobId && (reason instanceof AmbiguousSubmissionError || isTransientTransport(reason))) {
+        latest = { ...latest, status: latest.submissionJson ? 'submitted' : 'preparing', connectionError: String(reason) };
+        this.saveState(trackedRequest, latest, createdAt);
+        this.emitState(latest);
+        throw reason;
+      }
       if (latest.status !== 'failed' && latest.status !== 'error') {
         const failureStage = request.generationBrief && promptSetupError
           ? 'PROMPT_GENERATION_FAILED' as const
@@ -560,6 +597,7 @@ export class ComputeService {
       const restoredState = { ...record.state, localJobId: record.localJobId, remotePromptId: record.remotePromptId };
       this.lastStates.set(record.localJobId, restoredState);
       let state: ComputeJobState = restoredState;
+      if (record.request.autoJobId) continue; // Auto session recovery owns reconciliation and archive ordering.
       if (isRemoteTracked(state.status)) {
         if (!isCanonicalComfyPromptId(record.remotePromptId)) {
           state = {
@@ -606,7 +644,7 @@ export class ComputeService {
     const pending = this.releasingJobs.get(record.localJobId);
     if (pending) return pending;
     if (provider.mode !== 'remote') return state;
-    if (state.h3VramReleaseDurationMs != null && !(retryFailure && state.h3VramReleaseSucceeded === false)) return state;
+    if (state.h3VramReleaseDurationMs != null && !(retryFailure && (state.h3VramReleaseSucceeded === false || record.request.autoJobId && state.h3VramReleaseSucceeded !== true))) return state;
     const release = async () => {
       const publish = (next: ComputeJobState) => {
         state = this.applyStageTiming({ ...next, updatedAt: new Date().toISOString() });
@@ -616,6 +654,7 @@ export class ComputeService {
       const previousStage = state.pipelineStage;
       // Persist SaveVideo descriptors before ComfyUI clears its executor caches.
       publish({ ...state, pipelineStage: 'RELEASING_H3_VRAM', h3VramReleaseRequested: false, h3VramReleaseSucceeded: null, h3VramReleaseDurationMs: null, h3VramReleaseError: null });
+      if (record.request.autoJobId && state.status === 'completed') await this.autoArchive?.(record.request, state);
       const result = await provider.releaseH3Vram(record.remotePromptId ?? '', () => publish({ ...state, h3VramReleaseRequested: true }));
       publish({ ...state, ...result, pipelineStage: state.status === 'completed'
         ? this.getSettings().remoteAutoDownload && !state.localResultPath ? 'RELEASING_H3_VRAM' : 'COMPLETE'
@@ -647,7 +686,7 @@ export class ComputeService {
       state = await this.ensureH3VramReleased(entry, entry.provider, state);
     }
     const settings = this.getSettings();
-    if (state.status === 'completed' && settings.remoteAutoDownload && !state.localResultPath && !entry.downloadStarted) {
+    if (state.status === 'completed' && !entry.request.autoJobId && settings.remoteAutoDownload && !state.localResultPath && !entry.downloadStarted) {
       entry.downloadStarted = true;
       const output = findComfyVideoOutputs(state.outputs)[0];
       if (!output) {
@@ -664,7 +703,7 @@ export class ComputeService {
         }
       }
     }
-    if (state.status === 'completed' && (!settings.remoteAutoDownload || state.localResultPath)) {
+    if (state.status === 'completed' && (entry.request.autoJobId || !settings.remoteAutoDownload || state.localResultPath)) {
       state = this.applyStageTiming({ ...state, pipelineStage: 'COMPLETE' });
     }
     this.saveState(entry.request, state, entry.createdAt);
