@@ -3,7 +3,7 @@ import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { getProduct } from '../domain/data';
 import { createOptionalH3ReferencePlan } from '../domain/h3';
-import { clearProductReference, createLocalProductReference, isSupportedLocalReferenceImage, promptEngineStatusSnapshot, referenceAssetForSource, remoteProductReferencePath } from './H3VideoPromptsPage';
+import { clearProductReference, createLocalProductReference, h3VramReleaseVerified, isSupportedLocalReferenceImage, promptEngineStatusSnapshot, referenceAssetForSource, remoteProductReferencePath } from './H3VideoPromptsPage';
 
 const product = getProduct('serum')!;
 
@@ -86,5 +86,47 @@ describe('H3 product reference picker state', () => {
     };
     expect(promptEngineStatusSnapshot(status)).toEqual({ connection: 'Connected', model: 'Qwen 3.8 27B', status: 'Ready' });
     expect(promptEngineStatusSnapshot({ ...status, observedModelId: null, selectedModel: null, qwenReady: false })).toMatchObject({ model: 'Qwen 3.8 27B' });
+  });
+
+  it('renders lost H3 telemetry as historical and VRAM release as not applicable', () => {
+    const source = readFileSync(join(process.cwd(), 'src', 'ui', 'H3VideoPromptsPage.tsx'), 'utf8');
+    const start = source.indexOf('function RemoteH3Status');
+    const end = source.indexOf('function H3History', start);
+    const component = source.slice(start, end);
+    expect(component).toContain("remoteLifecycleState === 'REMOTE_STATE_LOST'");
+    expect(component).toContain('Last observed H3 progress');
+    expect(component).toContain('Not applicable — remote execution lost');
+    expect(component).toContain('job?.h3VramReleaseError && !remoteStateLost');
+  });
+
+  it('shows authoritative runtime and database provenance in Advanced diagnostics', () => {
+    const source = readFileSync(join(process.cwd(), 'src', 'ui', 'AutoH3Panel.tsx'), 'utf8');
+    for (const label of [
+      'RUNNING EXECUTABLE', 'BUILD TIMESTAMP', 'APP VERSION / BUILD ID', 'APP.ASAR SHA-256',
+      'USER DATA DIRECTORY', 'ACTIVE DATABASE PATH', 'DATABASE SCHEMA VERSION',
+      'CURRENT AUTO SESSION ID', 'CURRENT AUTO JOB ID', 'CURRENT COMPUTE JOB ID', 'CURRENT COMFY PROMPT ID'
+    ]) expect(source).toContain(label);
+  });
+
+  it('shows the fresh lifecycle inputs and release decision in Auto Run diagnostics', () => {
+    const source = readFileSync(join(process.cwd(), 'src', 'ui', 'AutoH3Panel.tsx'), 'utf8');
+    for (const label of [
+      'Live lifecycle decision', 'Queue sample', 'Queue sample timestamp', 'Queue request URL', 'Queue freshness',
+      'History sample', 'History sample timestamp', 'History request URL', 'History freshness', 'Completion evidence',
+      'Classifier', 'Classifier timestamp', 'Release authorization', '/free attempted'
+    ]) expect(source).toContain(label);
+  });
+
+  it('shows Verified only when fresh measured free VRAM passes the persisted threshold', () => {
+    const base = {
+      localJobId: 'job', remotePromptId: null, status: 'completed' as const, progress: 1, currentNode: null, queuePosition: null, queueRemaining: null,
+      outputs: [], referenceUploads: [], remoteUploadedFilename: null, localResultPath: null, downloadError: null, error: null, connectionError: null,
+      serverUrl: 'https://comfy.test', updatedAt: new Date().toISOString(), h3VramReleaseSucceeded: true, h3VramVerification: 'PASSED' as const,
+      h3VramPostMeasurementFresh: true, h3VramRequiredFreeBytes: 29 * 1024 ** 3,
+      h3VramAfterRelease: { capturedAt: new Date().toISOString(), devices: [{ type: 'cuda', name: 'RTX 5090', vramTotalBytes: 32 * 1024 ** 3, vramFreeBytes: 8 * 1024 ** 3, torchReservedBytes: 64 * 1024 ** 2 }] }
+    };
+    expect(h3VramReleaseVerified(base)).toBe(false);
+    expect(h3VramReleaseVerified({ ...base, h3VramAfterRelease: { ...base.h3VramAfterRelease, devices: [{ ...base.h3VramAfterRelease.devices[0], vramFreeBytes: 29 * 1024 ** 3 }] } })).toBe(true);
+    expect(h3VramReleaseVerified({ ...base, h3VramPostMeasurementFresh: false, h3VramAfterRelease: { ...base.h3VramAfterRelease, devices: [{ ...base.h3VramAfterRelease.devices[0], vramFreeBytes: 29 * 1024 ** 3 }] } })).toBe(false);
   });
 });

@@ -1,0 +1,11 @@
+ZIP filename: PROYA-China-H3-QwenCleanup-FINAL-20260907.zip
+SHA-256: 3e83aa03efc1ca4b23f6ef2a4c5a2b60bbe5f50b2a3efc54aa8e32fe6c74ecbf
+Pinned upstream commit: 66858ebd55a52924d4b113fcd518726b2038a77c
+Applied PROYA patches:
+- 0001-proya-autonomous-h3.patch
+- 0002-proya-direct-qwen-timeout.patch
+- 0003-proya-lmstudio-managed-output-tokens.patch
+- 0004-proya-qwen-finalization.patch
+Build timestamp: 2026-09-07T23:15:55+07:00
+Includes validation-failure exact-Qwen cleanup fix
+Staged folder path: C:\Data\proya-creative-studio\deploy\qwen-cleanup-final-20260907\ComfyUI-MiniMax-H3-Prompt-Enhancer\

@@ -123,6 +123,38 @@ def test_autonomous_model_is_fixed_to_the_production_qwen_id(monkeypatch):
     assert manifest["modelId"] == prompt_enhancer.PROMPT_ENGINE_MODEL_ID
 
 
+def test_prompt_timeout_attempts_exact_qwen_cleanup_and_preserves_original_error(monkeypatch):
+    observations = iter([
+        {"models": [{"key": prompt_enhancer.PROMPT_ENGINE_MODEL_ID, "loaded_instances": [{"id": "timeout-qwen-instance"}]}]},
+        {"models": [{"key": prompt_enhancer.PROMPT_ENGINE_MODEL_ID, "loaded_instances": [{"id": "timeout-qwen-instance"}]}]},
+        {"models": [{"key": prompt_enhancer.PROMPT_ENGINE_MODEL_ID, "loaded_instances": [{"id": "timeout-qwen-instance"}]}]},
+        {"models": [{"key": prompt_enhancer.PROMPT_ENGINE_MODEL_ID, "loaded_instances": []}]},
+    ])
+    unload_requests = []
+
+    def fake_request(url, body, _headers, connect_timeout, read_timeout):
+        assert connect_timeout <= read_timeout
+        if url.endswith("/api/v1/models"):
+            return _transport_payload(next(observations))
+        if url.endswith("/api/v1/chat"):
+            raise socket.timeout("simulated prompt timeout")
+        if url.endswith("/api/v1/models/unload"):
+            unload_requests.append(json.loads(body.decode("utf-8")))
+            return _transport_payload({"instance_id": "timeout-qwen-instance"})
+        raise AssertionError(f"unexpected request {url}")
+
+    monkeypatch.setattr(prompt_enhancer, "_direct_http_request", fake_request)
+    with pytest.raises(RuntimeError, match="timed out after 30 seconds") as raised:
+        prompt_enhancer.enhance_prompt(
+            "A knight crosses a wet alley. No music.", "t2va", 5.0, "",
+            "http://127.0.0.1:1234/v1", "", "", 0.2, None, 30, 0, False,
+        )
+
+    assert unload_requests == [{"instance_id": "timeout-qwen-instance"}]
+    assert "[PROYA_LLM_CLEANUP]" in str(raised.value)
+    assert '"unload_succeeded":true' in str(raised.value)
+
+
 def test_autonomous_native_request_omits_output_token_limit(monkeypatch):
     payloads = []
 

@@ -1,0 +1,477 @@
+diff --git a/auto_routes.py b/auto_routes.py
+index df73a7f..29fdf01 100644
+--- a/auto_routes.py
++++ b/auto_routes.py
+@@ -1,20 +1,80 @@
+ """Auto Run routes run on the China PC, alongside the existing prompt nodes."""
+ import asyncio
+ from pathlib import Path
+ from aiohttp import web
+ import folder_paths
+ import comfy.model_management
+ from server import PromptServer
+ from .auto_archive import check_root, copy_verified, within
++from .prompt_enhancer import inspect_prompt_model, unload_prompt_model_instance
+ 
+ _archive_lock = asyncio.Lock()
+ 
+ 
++def _qwen_recovery(endpoint, api_key):
++    """Inspect/unload Qwen while the ComfyUI queue mutex prevents a new job."""
++    queue = PromptServer.instance.prompt_queue
++    with queue.mutex:
++        running = list(getattr(queue, "currently_running", {}).values())
++        pending_queue = getattr(queue, "queue", ())
++        pending = list(pending_queue) if pending_queue is not None else []
++        if running or pending:
++            return {
++                "activePromptJob": True,
++                "staleQwenDetected": False,
++                "staleQwenInstanceId": None,
++                "staleQwenUnloadAttempted": False,
++                "staleQwenUnloadSucceeded": None,
++                "staleQwenUnloadError": "An active or queued ComfyUI prompt owns the execution queue; Qwen cleanup was skipped.",
++            }
++        observation = inspect_prompt_model(endpoint, api_key, 20)
++        instance_ids = observation["instance_ids"]
++        result = {
++            "activePromptJob": False,
++            "staleQwenDetected": bool(instance_ids),
++            "staleQwenInstanceId": instance_ids[0] if len(instance_ids) == 1 else None,
++            "staleQwenUnloadAttempted": False,
++            "staleQwenUnloadSucceeded": None,
++            "staleQwenUnloadError": None,
++        }
++        if len(instance_ids) > 1:
++            result["staleQwenUnloadError"] = "Multiple loaded canonical Qwen instances were found; refusing to guess which stale instance to unload."
++            return result
++        if len(instance_ids) == 1:
++            result["staleQwenUnloadAttempted"] = True
++            unloaded = unload_prompt_model_instance(endpoint, instance_ids[0], api_key, 20)
++            result["staleQwenUnloadSucceeded"] = bool(unloaded["unload_succeeded"])
++            result["staleQwenUnloadError"] = unloaded["unload_error"]
++        return result
++
++
++@PromptServer.instance.routes.post("/proya/auto/qwen-recovery")
++async def qwen_recovery(request):
++    try:
++        body = await request.json()
++        result = await asyncio.to_thread(
++            _qwen_recovery,
++            body.get("endpoint", "http://127.0.0.1:1234/v1"),
++            body.get("api_key", ""),
++        )
++        return web.json_response(result)
++    except Exception as exc:
++        return web.json_response({
++            "activePromptJob": False,
++            "staleQwenDetected": False,
++            "staleQwenInstanceId": None,
++            "staleQwenUnloadAttempted": False,
++            "staleQwenUnloadSucceeded": None,
++            "staleQwenUnloadError": None,
++            "qwenRecoveryError": str(exc),
++        })
++
++
+ @PromptServer.instance.routes.post("/proya/auto/archive/check")
+ async def check_archive(request):
+     try:
+         body = await request.json()
+         root = await asyncio.to_thread(check_root, body["root"])
+         return web.json_response({"root": str(root), "ready": True})
+     except Exception as exc:
+         return web.json_response({"error": str(exc)}, status=400)
+diff --git a/prompt_enhancer.py b/prompt_enhancer.py
+index fd554cd..c36c611 100644
+--- a/prompt_enhancer.py
++++ b/prompt_enhancer.py
+@@ -7,16 +7,17 @@ import hashlib
+ import http.client
+ import json
+ import math
+ import os
+ import re
+ import socket
+ import ssl
+ import threading
++import time
+ from collections.abc import Callable
+ from urllib.parse import urlparse
+ 
+ try:
+     from .content_formats import CONTENT_FORMAT_CATALOG_VERSION, resolve_content_format
+     from .creative_treatments import build_shots_package, normalize_title_screen_style_signature, parse_cinematography, parse_creative_treatment, parse_shot_plan, resolve_treatment_conflicts, resolve_visual_style, title_screen_requested, title_screen_roles, title_screen_text_authorized, treatment_warnings
+     from .media_manifest import generation_profile, parse_media_manifest, parse_media_project
+     from .planning_context import compile_planning_context
+@@ -172,16 +173,76 @@ def _native_model_observation(root: str, api_key: str, timeout: int) -> tuple[st
+         for instance in instances
+         if isinstance(instance, dict) and str(instance.get("id", instance.get("instance_id", ""))).strip()
+     ]
+     # A native chat response identifies the exact instance after JIT/autoload;
+     # preflight never guesses when more than one target instance is present.
+     return PROMPT_ENGINE_MODEL_ID, instance_ids[0] if len(instance_ids) == 1 else None
+ 
+ 
++def inspect_prompt_model(endpoint: str, api_key: str = "", timeout: int = 20) -> dict:
++    """Inspect only the canonical Qwen model and its loaded native instances."""
++    root = _api_root(endpoint)
++    _require_allowed_endpoint(root, False)
++    payload = _request_json(_native_root(root) + "/api/v1/models", None, str(api_key or ""), max(3, min(int(timeout), 60)))
++    target = _native_model_entry(payload)
++    instances = target.get("loaded_instances") if isinstance(target, dict) else []
++    instance_ids = [
++        str(instance.get("id", instance.get("instance_id", ""))).strip()
++        for instance in instances or ()
++        if isinstance(instance, dict) and str(instance.get("id", instance.get("instance_id", ""))).strip()
++    ]
++    return {
++        "model_id": PROMPT_ENGINE_MODEL_ID,
++        "model_available": target is not None,
++        "instance_ids": instance_ids,
++    }
++
++
++def unload_prompt_model_instance(endpoint: str, instance_id: str, api_key: str = "", timeout: int = 20) -> dict:
++    """Unload and verify one exact canonical Qwen instance; never guess another instance."""
++    started_at = time.monotonic()
++    target_instance_id = str(instance_id or "").strip()
++    result = {
++        "unload_requested": bool(target_instance_id),
++        "unload_succeeded": False,
++        "unload_error": None,
++        "instance_id": target_instance_id or None,
++        "unload_duration_ms": 0,
++    }
++    try:
++        if not target_instance_id:
++            raise ValueError("LM Studio exact Qwen unload requires an instance ID.")
++        root = _api_root(endpoint)
++        _require_allowed_endpoint(root, False)
++        observation = inspect_prompt_model(endpoint, api_key, timeout)
++        if not observation["model_available"]:
++            raise ValueError("LM Studio no longer reports qwen/qwen3.8-27b; refusing to unload another model.")
++        if observation["instance_ids"] != [target_instance_id]:
++            raise ValueError("LM Studio did not report exactly the requested canonical Qwen instance.")
++        response = _request_json(
++            _native_root(root) + "/api/v1/models/unload",
++            {"instance_id": target_instance_id},
++            str(api_key or ""),
++            max(3, min(int(timeout), 60)),
++        )
++        response_instance_id = str(response.get("instance_id", target_instance_id)).strip()
++        if response_instance_id != target_instance_id:
++            raise ValueError("LM Studio returned an unexpected unload instance ID.")
++        remaining = inspect_prompt_model(endpoint, api_key, timeout)
++        if target_instance_id in remaining["instance_ids"]:
++            raise ValueError("LM Studio still reports the exact Qwen instance after unload.")
++        result["unload_succeeded"] = True
++    except Exception as exc:
++        result["unload_error"] = str(exc)
++    finally:
++        result["unload_duration_ms"] = max(0, int(round((time.monotonic() - started_at) * 1000)))
++    return result
++
++
+ def discover_model(endpoint: str, api_key: str = "", allow_remote_endpoint: bool = False,
+                    timeout: int = 15) -> tuple[str, str | None]:
+     """Resolve only the fixed autonomous LM Studio prompt model."""
+     root = _api_root(endpoint)
+     _require_allowed_endpoint(root, bool(allow_remote_endpoint))
+     try:
+         return _native_model_observation(root, str(api_key or ""), max(3, min(int(timeout), 60)))
+     except RuntimeError as exc:
+@@ -978,55 +1039,76 @@ def enhance_prompt(basic_prompt: str, mode: str, duration_seconds: float,
+         "model": selected_model,
+         "temperature": float(temperature),
+         "thinkingDisabled": bool(disable_thinking),
+         "lmStudioNativePreferred": bool(disable_thinking),
+     }
+     if max_tokens is not None and int(max_tokens) > 0:
+         prompt_engine_manifest["maxTokens"] = int(max_tokens)
+ 
+-    enhanced, validation, result_manifest = enhance_prompt_with_completion(
+-        basic_prompt,
+-        mode,
+-        duration_seconds,
+-        reference_context,
+-        complete,
+-        repair_attempts,
+-        prompt_engine_manifest,
+-        enhance_description,
+-        ambience_foley_policy,
+-        background_score_policy,
+-        voice_performance,
+-        instrumental_description,
+-        aspect_ratio,
+-        media_manifest,
+-        multishot_shot_count,
+-        frame_count,
+-        multishot_identity_lock,
+-        multishot_voice_lock,
+-        multishot_setting_lock,
+-        creative_treatment_json,
+-        shot_plan_json,
+-        cinematography_json,
+-        instrumental_style,
+-        acoustic_space,
+-        dialogue_coverage,
+-        delivery_target,
+-        dialogue_language,
+-        editing_intent,
+-        invent_scene,
+-        creative_latitude=creative_latitude,
+-        lora_trigger_words=lora_trigger_words,
+-        system_prompt_override=system_prompt_override,
+-    )
+-    if len(instance_ids) > 1:
+-        raise RuntimeError("LM Studio returned more than one model instance during prompt generation without identifying the instance actually used; H3 was not queued.")
+-    instance_id = next(iter(instance_ids), "")
+-    if not instance_id:
+-        instance_id = _loaded_instance_id(root, selected_model, secret, int(timeout))
+-    result_manifest = dict(result_manifest)
+-    result_manifest["modelId"] = selected_model
+-    result_manifest["modelInstanceId"] = instance_id
+-    result_manifest["llmTimeoutSeconds"] = int(timeout)
+-    result_manifest["httpConnectTimeoutSeconds"] = min(LLM_CONNECT_TIMEOUT_SECONDS, int(timeout))
+-    result_manifest["httpReadTimeoutSeconds"] = int(timeout)
+-    result_manifest["httpOverallTimeoutSeconds"] = None
+-    return enhanced, validation, result_manifest
++    try:
++        enhanced, validation, result_manifest = enhance_prompt_with_completion(
++            basic_prompt,
++            mode,
++            duration_seconds,
++            reference_context,
++            complete,
++            repair_attempts,
++            prompt_engine_manifest,
++            enhance_description,
++            ambience_foley_policy,
++            background_score_policy,
++            voice_performance,
++            instrumental_description,
++            aspect_ratio,
++            media_manifest,
++            multishot_shot_count,
++            frame_count,
++            multishot_identity_lock,
++            multishot_voice_lock,
++            multishot_setting_lock,
++            creative_treatment_json,
++            shot_plan_json,
++            cinematography_json,
++            instrumental_style,
++            acoustic_space,
++            dialogue_coverage,
++            delivery_target,
++            dialogue_language,
++            editing_intent,
++            invent_scene,
++            creative_latitude=creative_latitude,
++            lora_trigger_words=lora_trigger_words,
++            system_prompt_override=system_prompt_override,
++        )
++        if len(instance_ids) > 1:
++            raise RuntimeError("LM Studio returned more than one model instance during prompt generation without identifying the instance actually used; H3 was not queued.")
++        instance_id = next(iter(instance_ids), "")
++        if not instance_id:
++            instance_id = _loaded_instance_id(root, selected_model, secret, int(timeout))
++        result_manifest = dict(result_manifest)
++        result_manifest["modelId"] = selected_model
++        result_manifest["modelInstanceId"] = instance_id
++        result_manifest["llmTimeoutSeconds"] = int(timeout)
++        result_manifest["httpConnectTimeoutSeconds"] = min(LLM_CONNECT_TIMEOUT_SECONDS, int(timeout))
++        result_manifest["httpReadTimeoutSeconds"] = int(timeout)
++        result_manifest["httpOverallTimeoutSeconds"] = None
++        return enhanced, validation, result_manifest
++    except Exception as exc:
++        cleanup = {
++            "unload_requested": False,
++            "unload_succeeded": False,
++            "unload_error": "No exact loaded Qwen instance was available for cleanup.",
++            "instance_id": None,
++            "unload_duration_ms": 0,
++        }
++        candidate = next(iter(instance_ids), "") if len(instance_ids) == 1 else ""
++        if len(instance_ids) > 1:
++            cleanup["unload_error"] = "Multiple loaded Qwen instances were observed; cleanup refused to guess an instance."
++        elif not candidate:
++            try:
++                candidate = _loaded_instance_id(root, selected_model, secret, min(int(timeout), 20))
++            except Exception as resolve_error:
++                cleanup["unload_error"] = f"Could not resolve the exact loaded Qwen instance for cleanup: {resolve_error}"
++        if candidate:
++            cleanup = unload_prompt_model_instance(root, candidate, secret, 20)
++        marker = " [PROYA_LLM_CLEANUP]" + json.dumps(cleanup, ensure_ascii=False, separators=(",", ":"))
++        raise RuntimeError(f"{exc}{marker}") from exc
+diff --git a/prompt_enhancer_node.py b/prompt_enhancer_node.py
+index 06729c1..6eb2edb 100644
+--- a/prompt_enhancer_node.py
++++ b/prompt_enhancer_node.py
+@@ -954,33 +954,46 @@ class MiniMaxH3PromptValidator:
+                  voice_performance="audible", aspect_ratio="auto", media_manifest="",
+                  multishot_shot_count=0, frame_count=0, multishot_identity_lock="",
+                  multishot_voice_lock="", multishot_setting_lock="", show_advanced_controls=False,
+                  creative_treatment_json="", shot_plan_json="", cinematography_json="",
+                  enhance_description=True, delivery_target="local", instrumental_description="",
+                  instrumental_style="none", acoustic_space="none", dialogue_coverage="off",
+                  dialogue_language="auto", editing_intent="none", invent_scene=False, creative_latitude=None,
+               lora_trigger_words=""):
+-        # validate_prompt does not take the profile, so it is resolved only for its side effect
+-        # on enhance_description below.
+-        _resolved_latitude_name(creative_latitude, enhance_description, invent_scene)
+-        enhance_description, invent_scene = _resolve_latitude(
+-            creative_latitude, enhance_description, invent_scene)
+-        report = validate_prompt(
+-            prompt, mode, duration_seconds, source_prompt, reference_context,
+-            ambience_foley_policy, background_score_policy, voice_performance,
+-            aspect_ratio, media_manifest, multishot_shot_count, frame_count,
+-            multishot_identity_lock, multishot_voice_lock, multishot_setting_lock,
+-            (), creative_treatment_json, shot_plan_json, cinematography_json,
+-            enhance_description=bool(enhance_description), delivery_target=delivery_target,
+-            instrumental_description=instrumental_description, instrumental_style=instrumental_style,
+-            acoustic_space=acoustic_space, dialogue_coverage=dialogue_coverage,
+-            dialogue_language=dialogue_language,
+-            editing_intent=editing_intent,
+-        )
++        try:
++            # validate_prompt does not take the profile, so it is resolved only
++            # for its side effect on enhance_description below. Keep all of
++            # validation inside this guard so a validator exception still
++            # returns a durable invalid result for the cleanup node.
++            _resolved_latitude_name(creative_latitude, enhance_description, invent_scene)
++            enhance_description, invent_scene = _resolve_latitude(
++                creative_latitude, enhance_description, invent_scene)
++            report = validate_prompt(
++                prompt, mode, duration_seconds, source_prompt, reference_context,
++                ambience_foley_policy, background_score_policy, voice_performance,
++                aspect_ratio, media_manifest, multishot_shot_count, frame_count,
++                multishot_identity_lock, multishot_voice_lock, multishot_setting_lock,
++                (), creative_treatment_json, shot_plan_json, cinematography_json,
++                enhance_description=bool(enhance_description), delivery_target=delivery_target,
++                instrumental_description=instrumental_description, instrumental_style=instrumental_style,
++                acoustic_space=acoustic_space, dialogue_coverage=dialogue_coverage,
++                dialogue_language=dialogue_language,
++                editing_intent=editing_intent,
++            )
++        except Exception as exc:
++            # Validation is part of the prompt finalization phase. Return a
++            # durable invalid result so the exact Qwen unload node can still
++            # execute before the blocking validity gate.
++            report = {
++                "valid": False,
++                "errors": [f"Prompt validator exception: {exc}"],
++                "warnings": [],
++                "failureStage": "PROMPT_VALIDATION_FAILED",
++            }
+         report_text = json.dumps(report, ensure_ascii=False, indent=2)
+         return {
+             "ui": {
+                 "text": [str(prompt), report_text],
+                 "minimax_h3_diagnostics": _diagnostic_ui_payload(report, str(prompt)),
+                 "proya_h3_structured_output": [json.dumps({
+                     "schemaVersion": 1,
+                     "prompt": str(prompt),
+@@ -1002,22 +1015,29 @@ class MiniMaxH3PromptValidityGate:
+     DESCRIPTION = "Pass a validated H3 prompt forward or fail the ComfyUI execution before sampling."
+ 
+     @classmethod
+     def INPUT_TYPES(cls):
+         return {"required": {
+             "prompt": ("STRING", {"multiline": True, "default": "", "dynamicPrompts": False}),
+             "valid": ("BOOLEAN", {"default": False}),
+             "validation_report": ("STRING", {"multiline": True, "default": "", "dynamicPrompts": False}),
++        }, "optional": {
++            "unload_succeeded": ("BOOLEAN", {"default": True}),
++            "unload_error": ("STRING", {"multiline": True, "default": "", "dynamicPrompts": False}),
+         }}
+ 
+-    def gate(self, prompt, valid, validation_report):
++    def gate(self, prompt, valid, validation_report, unload_succeeded=True, unload_error=""):
+         report = str(validation_report or "")
+         if not bool(valid):
+-            raise ValueError("MiniMax H3 prompt validation failed; H3 sampling was blocked. " + report)
++            cleanup = str(unload_error or "").strip() or "Qwen cleanup completed."
++            raise ValueError("PROMPT_VALIDATION_FAILED: H3 sampling was blocked after Qwen cleanup. " + cleanup + " " + report)
++        if not bool(unload_succeeded):
++            cleanup = str(unload_error or "").strip() or "LM Studio did not verify the exact Qwen instance as unloaded."
++            raise ValueError("LLM_UNLOAD_FAILED: H3 sampling was blocked because exact Qwen cleanup failed. " + cleanup)
+         return str(prompt), True, report
+ 
+ 
+ class MiniMaxH3UnloadLMStudioModel:
+     """Unload only the exact model instance emitted by the prompt enhancer."""
+ 
+     CATEGORY = "MiniMax H3/Prompting"
+     FUNCTION = "unload"
+@@ -1051,45 +1071,45 @@ class MiniMaxH3UnloadLMStudioModel:
+             method=method,
+             headers={"Accept": "application/json", **({"Content-Type": "application/json"} if data else {})},
+         )
+         with urllib.request.urlopen(request, timeout=20) as response:
+             raw = response.read().decode("utf-8")
+         return json.loads(raw) if raw.strip() else {}
+ 
+     @staticmethod
+-    def _result(prompt, valid, validation_report, succeeded, error, instance_id, started_at):
++    def _result(prompt, valid, validation_report, succeeded, error, instance_id, started_at, requested=True):
+         duration_ms = max(0, int(round((time.monotonic() - started_at) * 1000)))
+         normalized_error = str(error).strip() if error else ""
+         normalized_instance_id = str(instance_id).strip() if instance_id else ""
+         result = (str(prompt), bool(valid), str(validation_report or ""), bool(succeeded), normalized_error, normalized_instance_id, duration_ms)
+         structured_output = {
+             "schemaVersion": 1,
+             "instance_id": normalized_instance_id or None,
+             "llm_instance_id": normalized_instance_id or None,
++            "unload_requested": bool(requested),
+             "unload_succeeded": bool(succeeded),
+             "unload_error": normalized_error or None,
+             "unload_duration_ms": duration_ms,
+         }
+         return {
+             "ui": {
+                 "proya_h3_structured_output": [json.dumps(structured_output, ensure_ascii=False, separators=(",", ":"))],
+             },
+             "result": result,
+         }
+ 
+     def unload(self, prompt, valid, validation_report, endpoint, model, instance_id, unload):
+         started_at = time.monotonic()
+         target_instance_id = str(instance_id or "").strip()
+         resolved_instance_id = target_instance_id
++        requested = bool(unload) and bool(target_instance_id)
+         try:
+-            if not bool(valid):
+-                raise ValueError("MiniMax H3 prompt validation failed; LM Studio unload was not attempted.")
+             if not bool(unload):
+-                return self._result(prompt, True, validation_report, False, "Unload disabled by settings.", instance_id, started_at)
++                return self._result(prompt, valid, validation_report, False, "Unload disabled by settings.", instance_id, started_at, False)
+             # Ignore legacy widget values; only the canonical prompt model is eligible.
+             selected_model = PROMPT_ENGINE_MODEL_ID
+             if not target_instance_id:
+                 raise ValueError("LM Studio unload requires the exact instance ID emitted by the prompt enhancer.")
+             root = self._root(endpoint)
+             models = self._json_request(root + "/api/v1/models")
+             selected = next(
+                 (
+@@ -1121,11 +1141,15 @@ class MiniMaxH3UnloadLMStudioModel:
+                     isinstance(candidate, dict)
+                     and str(candidate.get("id", candidate.get("instance_id", ""))) == target_instance_id
+                     for candidate in item.get("loaded_instances", [])
+                 )
+                 for item in remaining.get("models", [])
+             )
+             if still_loaded:
+                 raise ValueError("LM Studio still reports the exact prompt-model instance after unload.")
+-            return self._result(prompt, True, validation_report, True, "", resolved_instance_id, started_at)
++            return self._result(prompt, valid, validation_report, True, "", resolved_instance_id, started_at, requested)
+         except Exception as exc:
+-            raise RuntimeError(f"LM Studio exact-instance unload failed for {resolved_instance_id or 'unknown'}: {exc}") from exc
++            return self._result(
++                prompt, valid, validation_report, False,
++                f"LM Studio exact-instance unload failed for {resolved_instance_id or 'unknown'}: {exc}",
++                resolved_instance_id, started_at, requested,
++            )
+

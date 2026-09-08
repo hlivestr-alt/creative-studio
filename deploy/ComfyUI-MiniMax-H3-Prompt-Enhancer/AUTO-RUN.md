@@ -1,6 +1,6 @@
 # PROYA Continuous H3 archive extension
 
-This package retains the existing prompt enhancer, exact-instance Qwen unload, validator, and H3 workflow. The additional `auto_archive.py` and `auto_routes.py` register archive and targeted interruption routes in the China ComfyUI process.
+This package retains the existing prompt enhancer, exact-instance Qwen unload, validator, and H3 workflow. Prompt finalization now runs as validator → exact Qwen unload → validity gate, so an invalid prompt cannot bypass cleanup. Enhancer/timeout failures carry a best-effort exact-instance cleanup result, and the additional `auto_archive.py` and `auto_routes.py` register archive, targeted interruption, and stale-Qwen recovery routes in the China ComfyUI process.
 
 ## Install on the China PC
 
@@ -18,6 +18,7 @@ For a different archive location, set `PROYA_H3_ARCHIVE_ROOT` in the China Comfy
 - `POST /proya/auto/archive`: copies a SaveVideo MP4 from the configured ComfyUI output directory into the configured archive root, using a temporary file and size verification. Repeated requests for the same destination are idempotent. Original output remains intact.
 - `GET /proya/auto/archive/file`: serves only MP4 files inside the configured archive root for resumable laptop download attempts.
 - `POST /proya/auto/interrupt`: interrupts only the specified prompt if it currently owns the GPU, holding the ComfyUI queue mutex across the check and interruption. It does not interrupt an unrelated job or delete queued jobs.
+- `POST /proya/auto/qwen-recovery`: while holding the ComfyUI queue mutex, inspects only `qwen/qwen3.8-27b` through LM Studio's native `/api/v1/models` endpoint and unloads one exact stale instance. It refuses to guess when multiple instances exist or when any prompt is active/queued.
 
 All routes use the existing ComfyUI server/authentication boundary. Absolute relative paths, `..`, alternate separators, Windows drive/ADS syntax, and resolved symlink/junction escapes are rejected. The source is restricted to ComfyUI's output directory; the destination is restricted to the server-configured archive root.
 

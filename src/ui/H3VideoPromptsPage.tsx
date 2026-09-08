@@ -144,6 +144,26 @@ function formatStageTime(milliseconds: number | undefined): string {
   return milliseconds < 1000 ? `${Math.round(milliseconds)} ms` : `${(milliseconds / 1000).toFixed(1)} sec`;
 }
 
+function formatVramBytes(bytes: number | null | undefined): string {
+  return bytes === null || bytes === undefined || !Number.isFinite(bytes) ? '—' : `${(bytes / 1024 ** 3).toFixed(1)} GiB`;
+}
+
+function formatVramSnapshot(snapshot: ComputeJobState['h3VramAfterRelease']): string {
+  const gpu = snapshot?.devices.find((device) => device.type !== null && device.type !== 'cpu');
+  if (!gpu || gpu.vramTotalBytes === null || gpu.vramFreeBytes === null) return 'Unavailable';
+  return `${formatVramBytes(gpu.vramTotalBytes - gpu.vramFreeBytes)} used / ${formatVramBytes(gpu.vramFreeBytes)} free / ${formatVramBytes(gpu.vramTotalBytes)} total`;
+}
+
+export function h3VramReleaseVerified(job: ComputeJobState): boolean {
+  const gpu = job.h3VramAfterRelease?.devices.find((device) => device.type !== null && device.type !== 'cpu');
+  return job.h3VramReleaseSucceeded === true
+    && job.h3VramVerification === 'PASSED'
+    && job.h3VramPostMeasurementFresh === true
+    && job.h3VramRequiredFreeBytes !== null && job.h3VramRequiredFreeBytes !== undefined
+    && gpu?.vramFreeBytes !== null && gpu?.vramFreeBytes !== undefined
+    && gpu.vramFreeBytes >= job.h3VramRequiredFreeBytes;
+}
+
 function defaultPromptEngine(settings: AppSettings | null): H3PromptEngineSettings {
   return settings?.h3PromptEngine ?? { ...defaultH3PromptEngineSettings };
 }
@@ -536,6 +556,7 @@ export function H3VideoPromptsPage() {
 
       <aside className="h3-right-rail">
         <RemoteH3Status job={remoteJob} onOpenOutput={(output) => void window.proya.compute.openOutput(output)} onDownloadResult={() => void downloadResult()} onOpenResult={() => { if (remoteJob?.localJobId) void window.proya.compute.openResult(remoteJob.localJobId); }} />
+        <H3VramReleaseTelemetry job={remoteJob} />
         <section className="h3-preview-card"><div className="h3-rail-heading"><div><span className="eyebrow">Output</span><h2>Video preview</h2></div>{videoOutput && <span className="h3-status-pill complete">Ready</span>}</div>{videoOutput ? <video className="h3-video-preview" controls preload="metadata" src={videoOutput.url}>Your browser cannot preview this video.</video> : <div className="h3-video-empty"><Cloud size={22} /><span>{remoteJob?.pipelineStage === 'COMPLETE' ? 'Video downloaded to this laptop.' : 'The generated video will appear here after ComfyUI completes.'}</span></div>}{remoteJob?.localResultPath && <div className="h3-local-result"><span>Downloaded result</span><strong title={remoteJob.localResultPath}>{remoteJob.localResultPath}</strong><button type="button" onClick={() => { if (remoteJob.localJobId) void window.proya.compute.openResult(remoteJob.localJobId); }}><ExternalLink size={13} />Open result</button></div>}</section>
         <section className="h3-debug-card"><div className="h3-rail-heading"><div><span className="eyebrow">Read-only debug</span><h2>Final prompt</h2></div><button className="button secondary small" type="button" onClick={() => void copyFinalPrompt()} disabled={!remoteJob?.finalEnhancedPrompt}>{copied ? 'Copied' : 'Copy'}</button></div><p>Only the remote enhancer output is shown here. This panel never edits or feeds the job.</p><button className="h3-debug-toggle" type="button" onClick={() => setShowDebugPrompt((value) => !value)}>{showDebugPrompt ? 'Hide final prompt' : 'Show final prompt'}</button>{showDebugPrompt && <pre className="h3-final-prompt">{remoteJob?.finalEnhancedPrompt ?? 'Waiting for MiniMaxH3PromptEnhancer output.'}</pre>}</section>
         <H3ReferenceContractInspector job={remoteJob} />
@@ -595,15 +616,35 @@ function PromptEngineSettings({ status, testing, onRefresh }: { status: H3Prompt
   );
 }
 
+function H3VramReleaseTelemetry({ job }: { job: ComputeJobState | null }) {
+  if (!job?.h3VramReleaseRequested || job.failureStage === 'REMOTE_STATE_LOST' || job.pipelineStage === 'REMOTE_STATE_LOST') return null;
+  const verified = h3VramReleaseVerified(job);
+  return <section className="h3-status-card" aria-label="H3 VRAM release telemetry">
+    <div className="h3-rail-heading"><div><span className="eyebrow">GPU handoff</span><h2>H3 VRAM release</h2></div><span className={`h3-status-pill ${verified ? 'complete' : 'active'}`}>{verified ? 'Verified' : 'Waiting'}</span></div>
+    <div className="h3-job-meta">
+      <span>VRAM before release</span><strong>{formatVramSnapshot(job.h3VramBeforeRelease)}</strong>
+      <span>POST /free</span><strong>{job.h3FreeRequestStatus ?? 'Pending'} · {job.h3FreeRequestResult ?? job.h3FreeRequestUrl ?? 'Waiting'}</strong>
+      <span>VRAM after release</span><strong>{formatVramSnapshot(job.h3VramAfterRelease)}</strong>
+      <span>Required free VRAM</span><strong>{formatVramBytes(job.h3VramRequiredFreeBytes)}</strong>
+      <span>Verification</span><strong>{verified ? 'PASSED' : job.h3VramVerification ?? 'WAITING'}</strong>
+      <span>Poll attempts</span><strong>{job.h3VramPollAttempts ?? 0}</strong>
+      <span>Elapsed time</span><strong>{formatStageTime(job.h3VramReleaseDurationMs ?? undefined)}</strong>
+    </div>
+  </section>;
+}
+
 function RemoteH3Status({ job: inputJob, onOpenOutput, onDownloadResult, onOpenResult }: { job: ComputeJobState | null; onOpenOutput: (output: ComputeJobState['outputs'][number]) => void; onDownloadResult: () => void; onOpenResult: () => void }) {
   // The button is rendered only when videoOutput exists, which implies inputJob is non-null.
   // Keep the assertion local so the rest of the rail can continue using optional rendering.
-  const job = inputJob as ComputeJobState;
+  const job = inputJob?.h3VramReleaseSucceeded === true && !h3VramReleaseVerified(inputJob)
+    ? { ...inputJob, h3VramReleaseSucceeded: false }
+    : inputJob as ComputeJobState;
   const successStages = ['PREPARING', 'UPLOADING_REFERENCES', 'WRITING_PROMPT', 'VALIDATING_PROMPT', 'UNLOADING_LLM', 'QUEUED_H3', 'GENERATING_H3', 'RELEASING_H3_VRAM', 'DOWNLOADING', 'COMPLETE'] as const;
   const currentIndex = job?.pipelineStage ? successStages.indexOf(job.pipelineStage as (typeof successStages)[number]) : -1;
   const statusLabel = job?.pipelineStage?.replaceAll('_', ' ') ?? 'READY';
+  const remoteStateLost = job?.failureStage === 'REMOTE_STATE_LOST' || job?.pipelineStage === 'REMOTE_STATE_LOST' || job?.h3LifecycleDiagnostics?.remoteLifecycleState === 'REMOTE_STATE_LOST';
   const videoOutput = job?.outputs.find((output) => output.kind === 'video' && output.nodeId === '92') ?? job?.outputs.find((output) => output.kind === 'video');
-  return <section className="h3-status-card"><div className="h3-rail-heading"><div><span className="eyebrow">Execution</span><h2>Remote job status</h2></div><span className={`h3-status-pill ${job?.status === 'failed' || job?.status === 'error' ? 'error' : job?.pipelineStage === 'COMPLETE' ? 'complete' : 'active'}`}>{statusLabel}</span></div><div className="h3-stage-list">{successStages.map((stage, index) => <div className={`h3-stage ${index <= currentIndex ? 'done' : ''} ${job?.pipelineStage === stage ? 'current' : ''}`} key={stage}><span>{index < currentIndex || job?.pipelineStage === 'COMPLETE' && stage === 'COMPLETE' ? '✓' : index + 1}</span><strong>{stage.replaceAll('_', ' ')}</strong></div>)}</div>{job?.failureStage && <div className="h3-failure-stage"><strong>{job.failureStage.replaceAll('_', ' ')}</strong><span>{job.error ?? job.downloadError ?? 'The pipeline stopped at this stage.'}</span></div>}{job && <div className="h3-job-meta"><span>Local Job ID</span><strong>{job.localJobId ?? '—'}</strong>{job.remotePromptId && <><span>ComfyUI prompt UUID</span><strong>{job.remotePromptId}</strong></>}{job.lmStudioModelId && <><span>Qwen model</span><strong>{job.lmStudioModelId}</strong></>}{job.repairAttemptsUsed !== undefined && job.repairAttemptsUsed !== null && <><span>Repair attempts</span><strong>{job.repairAttemptsUsed}</strong></>}{job.validationReport && <><span>Validation</span><strong>{job.failureStage === 'PROMPT_VALIDATION_FAILED' ? 'Failed' : 'Passed'}</strong></>}{job.stageTimings?.WRITING_PROMPT !== undefined && <><span>Rewrite time</span><strong>{formatStageTime(job.stageTimings.WRITING_PROMPT)}</strong></>}{job.llmUnloadRequested !== undefined && <><span>Qwen unload</span><strong>{job.llmUnloadSucceeded === true ? 'Verified' : job.llmUnloadError ?? 'Pending'}</strong></>}{job.h3VramReleaseRequested !== undefined && <><span>H3 VRAM release</span><strong>{job.h3VramReleaseDurationMs == null ? 'Pending' : job.h3VramReleaseSucceeded === true ? 'Verified' : job.h3VramReleaseSucceeded === false ? 'Failed' : 'Unverified'}</strong></>}{job.h3VramReleaseDurationMs != null && <><span>VRAM release time</span><strong>{formatStageTime(job.h3VramReleaseDurationMs)}</strong></>}{job.queueRemaining !== null && <><span>Queue remaining</span><strong>{job.queueRemaining}</strong></>}{job.progress !== null && <><span>H3 progress</span><strong>{Math.round(job.progress * 100)}%</strong></>}</div>}{job?.h3VramReleaseError && <p className="h3-warning">{job.h3VramReleaseError}</p>}{job?.connectionError && <p className="h3-warning">Live ComfyUI connection interrupted; polling will continue.</p>}{job?.error && !job.failureStage && <p className="h3-error">{job.error}</p>}{videoOutput && <div className="h3-output-actions"><button type="button" onClick={() => onOpenOutput(videoOutput)}><ExternalLink size={13} />Open remote</button><button type="button" onClick={onDownloadResult} disabled={job.status !== 'completed' || job.pipelineStage === 'RELEASING_H3_VRAM' || job.pipelineStage === 'DOWNLOADING'}><Download size={13} />Download result</button></div>}{job?.localResultPath && <button className="h3-result-link" type="button" onClick={onOpenResult}><ExternalLink size={13} />Open downloaded result</button>}</section>;
+  return <section className="h3-status-card"><div className="h3-rail-heading"><div><span className="eyebrow">Execution</span><h2>Remote job status</h2></div><span className={`h3-status-pill ${job?.status === 'failed' || job?.status === 'error' ? 'error' : job?.pipelineStage === 'COMPLETE' ? 'complete' : 'active'}`}>{statusLabel}</span></div><div className="h3-stage-list">{successStages.map((stage, index) => <div className={`h3-stage ${index <= currentIndex ? 'done' : ''} ${job?.pipelineStage === stage ? 'current' : ''}`} key={stage}><span>{index < currentIndex || job?.pipelineStage === 'COMPLETE' && stage === 'COMPLETE' ? '✓' : index + 1}</span><strong>{stage.replaceAll('_', ' ')}</strong></div>)}</div>{job?.failureStage && <div className="h3-failure-stage"><strong>{job.failureStage.replaceAll('_', ' ')}</strong><span>{job.error ?? job.downloadError ?? 'The pipeline stopped at this stage.'}</span></div>}{job && <div className="h3-job-meta"><span>Local Job ID</span><strong>{job.localJobId ?? '—'}</strong>{job.remotePromptId && <><span>ComfyUI prompt UUID</span><strong>{job.remotePromptId}</strong></>}{job.lmStudioModelId && <><span>Qwen model</span><strong>{job.lmStudioModelId}</strong></>}{job.repairAttemptsUsed !== undefined && job.repairAttemptsUsed !== null && <><span>Repair attempts</span><strong>{job.repairAttemptsUsed}</strong></>}{job.validationReport && <><span>Validation</span><strong>{job.failureStage === 'PROMPT_VALIDATION_FAILED' ? 'Failed' : 'Passed'}</strong></>}{job.stageTimings?.WRITING_PROMPT !== undefined && <><span>Rewrite time</span><strong>{formatStageTime(job.stageTimings.WRITING_PROMPT)}</strong></>}{job.llmUnloadRequested !== undefined && <><span>Qwen unload</span><strong>{job.llmUnloadSucceeded === true ? 'Verified' : job.llmUnloadError ?? 'Pending'}</strong></>}{remoteStateLost ? <><span>H3 VRAM release</span><strong>Not applicable — remote execution lost</strong></> : job.h3VramReleaseRequested !== undefined && <><span>H3 VRAM release</span><strong>{job.h3VramReleaseDurationMs == null ? 'Pending' : job.h3VramReleaseSucceeded === true ? 'Verified' : job.h3VramReleaseSucceeded === false ? 'Failed' : 'Unverified'}</strong></>}{!remoteStateLost && job.h3VramReleaseDurationMs != null && <><span>VRAM release time</span><strong>{formatStageTime(job.h3VramReleaseDurationMs)}</strong></>}{job.queueRemaining !== null && <><span>Queue remaining</span><strong>{job.queueRemaining}</strong></>}{job.progress !== null && <><span>{remoteStateLost ? 'Last observed H3 progress' : 'H3 progress'}</span><strong>{Math.round(job.progress * 100)}%</strong></>}</div>}{job?.h3VramReleaseError && !remoteStateLost && <p className="h3-warning">{job.h3VramReleaseError}</p>}{job?.connectionError && <p className="h3-warning">Live ComfyUI connection interrupted; polling will continue.</p>}{job?.error && !job.failureStage && <p className="h3-error">{job.error}</p>}{videoOutput && <div className="h3-output-actions"><button type="button" onClick={() => onOpenOutput(videoOutput)}><ExternalLink size={13} />Open remote</button><button type="button" onClick={onDownloadResult} disabled={job.status !== 'completed' || job.pipelineStage === 'RELEASING_H3_VRAM' || job.pipelineStage === 'DOWNLOADING'}><Download size={13} />Download result</button></div>}{job?.localResultPath && <button className="h3-result-link" type="button" onClick={onOpenResult}><ExternalLink size={13} />Open downloaded result</button>}</section>;
 }
 
 function H3History({ records, activeId, onReopen }: { records: H3PromptRecord[]; activeId: number | null; onReopen: (record: H3PromptRecord) => void }) {

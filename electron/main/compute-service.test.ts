@@ -158,8 +158,8 @@ describe('ComputeService job reconciliation', () => {
     globalThis.fetch = async (input) => {
       const url = String(input);
       requestedUrls.push(url);
-      if (url.endsWith(`/history/${remotePromptId}`)) {
-        return new Response(JSON.stringify({ [remotePromptId]: { status: { status_str: 'success', completed: true }, outputs: {} } }), { status: 200 });
+      if (new URL(url).pathname === `/history/${remotePromptId}`) {
+        return new Response(JSON.stringify({ [remotePromptId]: { status: { status_str: 'running', completed: false }, outputs: {} } }), { status: 200 });
       }
       throw new Error(`Unexpected ComfyUI request: ${url}`);
     };
@@ -167,8 +167,8 @@ describe('ComputeService job reconciliation', () => {
     const service = new ComputeService(() => settings, () => undefined, false, persistence);
     try {
       await service.restoreJobs();
-      expect(requestedUrls).toContain(`https://comfy.example.test/history/${remotePromptId}`);
-      expect(requestedUrls).not.toContain('https://comfy.example.test/history/local-h3-job-123');
+      expect(requestedUrls.some(url => new URL(url).pathname === `/history/${remotePromptId}`)).toBe(true);
+      expect(requestedUrls.some(url => new URL(url).pathname === '/history/local-h3-job-123')).toBe(false);
       expect(persisted[0]).toMatchObject({ localJobId: 'local-h3-job-123', remotePromptId, state: { localJobId: 'local-h3-job-123', remotePromptId } });
     } finally {
       service.dispose();
@@ -200,7 +200,10 @@ describe('ComputeService job reconciliation', () => {
   it('keeps a completed H3 job retryable when the first laptop download fails', async () => {
     const temporaryDirectory = mkdtempSync(join(tmpdir(), 'proya-h3-download-retry-'));
     const output = { nodeId: '92', kind: 'video', filename: 'result.mp4', subfolder: '', type: 'output', url: '' };
-    const completed = state('completed', { localResultPath: null, outputs: [output] });
+    const completed = state('completed', {
+      localResultPath: null, outputs: [output], h3VramReleaseRequested: true,
+      h3VramReleaseSucceeded: true, h3VramReleaseDurationMs: 2000
+    });
     const persisted = [remoteRecord('retryable-h3-job', completed, remotePromptId)];
     const persistence = {
       listRemoteH3Jobs: () => persisted,

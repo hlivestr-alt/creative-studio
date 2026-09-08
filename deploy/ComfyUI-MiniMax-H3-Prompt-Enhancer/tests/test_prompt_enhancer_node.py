@@ -8,6 +8,7 @@ from prompt_enhancer_node import (
     MiniMaxH3GGUFPromptEnhancer,
     MiniMaxH3PromptEnhancer,
     MiniMaxH3PromptGuideBuilder,
+    MiniMaxH3PromptValidator,
     MiniMaxH3UnloadLMStudioModel,
     MiniMaxH3UnloadGGUFServer,
     PROMPT_ENGINE_MODEL_ID,
@@ -338,6 +339,7 @@ def test_lm_studio_unload_uses_shared_model_constant_and_exact_instance(monkeypa
     assert result["result"][3:6] == (True, "", exact_instance_id)
     assert isinstance(result["result"][6], int)
     telemetry = json.loads(result["ui"]["proya_h3_structured_output"][0])
+    assert telemetry["unload_requested"] is True
     assert telemetry["unload_succeeded"] is True
     assert telemetry["unload_error"] is None
     assert telemetry["instance_id"] == exact_instance_id
@@ -351,3 +353,65 @@ def test_lm_studio_unload_uses_shared_model_constant_and_exact_instance(monkeypa
     assert disabled_telemetry["unload_succeeded"] is False
     assert disabled_telemetry["unload_error"] == "Unload disabled by settings."
     assert isinstance(disabled_telemetry["unload_duration_ms"], int)
+
+
+def test_lm_studio_unload_runs_for_invalid_prompt_before_gate(monkeypatch):
+    exact_instance_id = "qwen-invalid-instance"
+    observations = iter([
+        {"models": [{"key": PROMPT_ENGINE_MODEL_ID, "loaded_instances": [{"id": exact_instance_id}]}]},
+        {"models": [{"key": PROMPT_ENGINE_MODEL_ID, "loaded_instances": []}]},
+    ])
+    unload_requests = []
+
+    def fake_json_request(url, method="GET", body=None):
+        if method == "POST":
+            unload_requests.append((url, body))
+            return {"instance_id": exact_instance_id}
+        return next(observations)
+
+    monkeypatch.setattr(MiniMaxH3UnloadLMStudioModel, "_json_request", staticmethod(fake_json_request))
+    result = MiniMaxH3UnloadLMStudioModel().unload(
+        "invalid prompt", False, '{"valid":false}', "http://127.0.0.1:1234/v1",
+        PROMPT_ENGINE_MODEL_ID, exact_instance_id, True,
+    )
+
+    assert unload_requests == [(
+        "http://127.0.0.1:1234/api/v1/models/unload", {"instance_id": exact_instance_id}
+    )]
+    assert result["result"][1] is False
+    assert result["result"][3] is True
+    telemetry = json.loads(result["ui"]["proya_h3_structured_output"][0])
+    assert telemetry["unload_requested"] is True
+    assert telemetry["unload_succeeded"] is True
+
+
+def test_validator_exception_becomes_invalid_cleanup_candidate(monkeypatch):
+    def broken_validator(*_args, **_kwargs):
+        raise RuntimeError("validator exploded")
+
+    monkeypatch.setattr(prompt_enhancer_node, "validate_prompt", broken_validator)
+    result = MiniMaxH3PromptValidator().validate(
+        "prompt after Qwen", "t2va", 5.0, "source", "",
+    )
+
+    assert result["result"][1] is False
+    report = json.loads(result["result"][2])
+    assert report["failureStage"] == "PROMPT_VALIDATION_FAILED"
+    assert "validator exploded" in report["errors"][0]
+
+
+def test_validity_gate_preserves_validation_failure_after_cleanup():
+    gate = prompt_enhancer_node.MiniMaxH3PromptValidityGate()
+    try:
+        gate.gate("invalid", False, "validator report", True, "")
+    except ValueError as exc:
+        assert str(exc).startswith("PROMPT_VALIDATION_FAILED:")
+    else:
+        raise AssertionError("invalid prompt unexpectedly passed the validity gate")
+
+    try:
+        gate.gate("valid", True, "validator report", False, "LM Studio unload timed out")
+    except ValueError as exc:
+        assert str(exc).startswith("LLM_UNLOAD_FAILED:")
+    else:
+        raise AssertionError("failed Qwen cleanup unexpectedly passed the validity gate")

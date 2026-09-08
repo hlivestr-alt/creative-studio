@@ -86,8 +86,8 @@ H3GenerationBrief
   → 147 PrimitiveStringMultiline
   → 149 MiniMaxH3PromptEnhancer
   → 150 MiniMaxH3PromptValidator
-  → 151 MiniMaxH3PromptValidityGate
   → 152 MiniMaxH3UnloadLMStudioModel
+  → 151 MiniMaxH3PromptValidityGate
   → 136 MiniMaxH3ReferenceToVideo.prompt
 ```
 
@@ -121,8 +121,8 @@ direct-development requests; it is not on the production prompt path.
 | `153` | `PrimitiveStringMultiline` | Exact `media_manifest` shared by enhancer and validator |
 | `149` | `MiniMaxH3PromptEnhancer` | Qwen rewrite, exact system prompt, bounded repairs |
 | `150` | `MiniMaxH3PromptValidator` | Returns `prompt`, `valid`, `validation_report` |
-| `151` | `MiniMaxH3PromptValidityGate` | Raises on `valid = false` |
-| `152` | `MiniMaxH3UnloadLMStudioModel` | Unloads and verifies only the exact model instance emitted by node `149` |
+| `151` | `MiniMaxH3PromptValidityGate` | Final blocking decision after cleanup; raises on invalid prompt or unload failure |
+| `152` | `MiniMaxH3UnloadLMStudioModel` | Unloads and verifies only the exact model instance emitted by node `149`, including invalid prompts |
 | `137` | `LoadImage` | `<Picture 1>` → `ref_image_0` |
 | `139` | `LoadImage` | `<Picture 2>` → `ref_image_1` when supplied |
 | `136` | `MiniMaxH3ReferenceToVideo` | Locked `REF2VA` image/video/audio generation |
@@ -182,19 +182,30 @@ The production order is:
 LM Studio exposes qwen/qwen3.8-27b
   → Qwen rewrite and repairs, if needed
   → validator
-  → validity gate
   → unload the exact emitted model instance
   → verify instance is gone
+  → validity gate
   → queue MiniMax H3
 ```
 
-`MiniMaxH3PromptValidityGate` blocks the graph when the validator returns
-`valid = false`. Qwen is not unloaded until repair attempts and validation are
-finished. `MiniMaxH3UnloadLMStudioModel` receives the exact model and instance
+`MiniMaxH3UnloadLMStudioModel` runs before the final decision, including when
+the validator returns `valid = false`. It receives the exact model and instance
 IDs emitted by node `149`, verifies that pairing against LM Studio
 `/api/v1/models`, posts only that instance ID to `/api/v1/models/unload`, and
-rechecks the model list. It does not unload unrelated models. The result persists
-`llmUnloadRequested`, `llmUnloadSucceeded`, and `llmUnloadError`.
+rechecks the model list. It does not unload unrelated models. The gate then
+blocks invalid prompts with `PROMPT_VALIDATION_FAILED`, or blocks a valid prompt
+when cleanup could not be verified with `LLM_UNLOAD_FAILED`. The original
+validation or generation error remains the primary failure while cleanup
+telemetry persists separately in `llmUnloadRequested`, `llmUnloadSucceeded`,
+`llmUnloadError`, `llmInstanceId`, and `llmUnloadDurationMs`.
+
+Before a new autonomous prompt job, the ComfyUI extension also checks the queue
+under its mutex, identifies only stale `qwen/qwen3.8-27b` instances, unloads one
+exact instance when safe, and calls ComfyUI `/free` when Qwen or excessive VRAM
+is present. Active or queued prompts never trigger a guessed unload. Recovery
+telemetry is persisted with the job (`staleQwenDetected`,
+`staleQwenInstanceId`, `staleQwenUnloadAttempted`,
+`staleQwenUnloadSucceeded`, `comfyFreeAttempted`, and `observedFreeVram`).
 
 See [H3 → Qwen VRAM handoff](h3-vram-handoff.md) for bounded release verification,
 serialization, persisted diagnostics, and the hardware comparison status.
@@ -246,6 +257,7 @@ and playback/open actions. The final H3 prompt is expandable and read-only.
 | `GET /system_stats` | ComfyUI/GPU connection check |
 | `GET /object_info` | Confirm enhancer/validator/gate/unload nodes |
 | `POST /minimax_h3_prompt_enhancer/models` | ComfyUI-mediated LM Studio model discovery |
+| `POST /proya/auto/qwen-recovery` | Queue-safe stale canonical-Qwen inspection and exact cleanup |
 | `POST /upload/image` | Reference upload |
 | `POST /prompt` | Queue the validated API graph |
 | `WS /ws?clientId=...` | Live execution/progress events |
@@ -267,7 +279,10 @@ The documented patch is in
 It appends `system_prompt_override` as the final enhancer input, preserves
 upstream behavior when blank, carries the override through repairs, adds
 Indonesian aliases, and adds the validity-gate and exact-emitted-instance unload
-nodes. Apply it after checking out the pinned SHA and restart ComfyUI.
+nodes. Apply `0001`, `0002`, `0003`, and `0004-proya-qwen-finalization.patch`
+in order after checking out the pinned SHA and restart ComfyUI. The final patch
+puts exact Qwen cleanup before the validity gate, adds error-path cleanup and
+the queue-safe stale-Qwen recovery route.
 
 ## Future 24/7 generation
 

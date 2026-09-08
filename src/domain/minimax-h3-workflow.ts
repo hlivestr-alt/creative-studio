@@ -121,7 +121,7 @@ export function validateMiniMaxH3ApiWorkflowTemplate(value: unknown): ComfyApiWo
   const h3Node = workflow['136'];
   if (!h3Node || h3Node.class_type !== 'MiniMaxH3ReferenceToVideo') throw workflowError('expected node 136 to be MiniMaxH3ReferenceToVideo');
   const requiredLinks: ReadonlyArray<[string, string, number]> = [
-    ['prompt', '152', 0], ['width', '115', 0], ['height', '115', 1], ['length', '131', 1],
+    ['prompt', '151', 0], ['width', '115', 0], ['height', '115', 1], ['length', '131', 1],
     ['ref_images.ref_image_0', '137', 0], ['ref_images.ref_image_1', '139', 0]
   ];
   for (const [inputName, sourceNode, outputIndex] of requiredLinks) {
@@ -148,19 +148,21 @@ export function validateMiniMaxH3ApiWorkflowTemplate(value: unknown): ComfyApiWo
   }
   const gate = workflow['151'];
   if (!gate || gate.class_type !== 'MiniMaxH3PromptValidityGate'
-    || !isLink(gate.inputs.prompt, '150', 0)
-    || !isLink(gate.inputs.valid, '150', 1)
-    || !isLink(gate.inputs.validation_report, '150', 2)) {
-    throw workflowError('node 151 must be a blocking validity gate after MiniMaxH3PromptValidator');
+    || !isLink(gate.inputs.prompt, '152', 0)
+    || !isLink(gate.inputs.valid, '152', 1)
+    || !isLink(gate.inputs.validation_report, '152', 2)
+    || !isLink(gate.inputs.unload_succeeded, '152', 3)
+    || !isLink(gate.inputs.unload_error, '152', 4)) {
+    throw workflowError('node 151 must be a blocking validity gate after exact Qwen cleanup');
   }
   const unload = workflow['152'];
   if (!unload || unload.class_type !== 'MiniMaxH3UnloadLMStudioModel'
-    || !isLink(unload.inputs.prompt, '151', 0)
-    || !isLink(unload.inputs.valid, '151', 1)
-    || !isLink(unload.inputs.validation_report, '151', 2)
+    || !isLink(unload.inputs.prompt, '150', 0)
+    || !isLink(unload.inputs.valid, '150', 1)
+    || !isLink(unload.inputs.validation_report, '150', 2)
     || !isLink(unload.inputs.model, '149', 8)
     || !isLink(unload.inputs.instance_id, '149', 9)) {
-    throw workflowError('node 152 must unload the exact LM Studio model instance emitted by node 149 before the H3 sampler starts');
+    throw workflowError('node 152 must unload the exact LM Studio model instance after validation and before the validity gate');
   }
   const stepsSwitch = workflow['142'];
   if (!stepsSwitch || stepsSwitch.class_type !== 'ComfySwitchNode' || !isLink(stepsSwitch.inputs.switch, '146', 0) || !isLink(stepsSwitch.inputs.on_false, '143', 0) || !isLink(stepsSwitch.inputs.on_true, '144', 0)) {
@@ -436,7 +438,10 @@ export function validateH3PromptEngineSettings(settings: H3PromptEngineSettings)
  * instance ID actually used.
  */
 export function normalizeAutonomousH3PromptEngineSettings(settings: H3PromptEngineSettings): H3PromptEngineSettings {
-  return { ...settings, model: h3PromptEngineModelId };
+  // Autonomous prompt jobs always finalize the exact Qwen instance before the
+  // validity decision. This is cleanup policy, not a user-selectable H3
+  // runtime setting.
+  return { ...settings, model: h3PromptEngineModelId, unloadModelBeforeH3: true };
 }
 
 /** LM Studio is intentionally reachable only through ComfyUI on the execution PC. */

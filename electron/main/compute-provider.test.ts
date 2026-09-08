@@ -126,7 +126,7 @@ function autonomousDiscoveryFetch(
   let promptIndex = 0;
   return async (input, init) => {
     const url = String(input);
-    if (url.endsWith('/system_stats')) return new Response(JSON.stringify({ system: { comfyui_version: 'test' }, devices: [{ name: 'RTX 5090' }] }), { status: 200 });
+    if (new URL(url).pathname === '/system_stats') return new Response(JSON.stringify({ system: { comfyui_version: 'test' }, devices: [{ name: 'RTX 5090' }] }), { status: 200 });
     if (url.endsWith('/object_info')) return new Response(JSON.stringify(patchedPromptEngineObjectInfo()), { status: 200 });
     if (url.endsWith('/minimax_h3_prompt_enhancer/models')) {
       onDiscovery?.(JSON.parse(String(init?.body ?? '{}')) as Record<string, unknown>);
@@ -162,6 +162,8 @@ describe('RemoteComfyComputeProvider', () => {
     expect(classifyH3PromptEngineError('Cannot reach LLM endpoint http://127.0.0.1:1234/v1: connection refused')).toBe('LLM_UNAVAILABLE');
     expect(classifyH3PromptEngineError('Configured model is unavailable')).toBe('LLM_UNAVAILABLE');
     expect(classifyH3PromptEngineError('LLM endpoint returned HTTP 503: model unavailable')).toBe('LLM_UNAVAILABLE');
+    expect(classifyH3PromptEngineError('repair failed [PROYA_LLM_CLEANUP]{"unload_error":"LM Studio timed out"}')).toBe('PROMPT_GENERATION_FAILED');
+    expect(h3PromptEngineErrorMessage('PROMPT_VALIDATION_FAILED: report mentions a timeout', autonomousEngine)).toBe('PROMPT_VALIDATION_FAILED: report mentions a timeout');
     expect(h3PromptEngineErrorMessage('Client disconnected. Stopping generation…', autonomousEngine)).toContain('600-second');
   });
 
@@ -176,6 +178,7 @@ describe('RemoteComfyComputeProvider', () => {
     const patchText = readFileSync(join(process.cwd(), 'patches', 'ComfyUI-MiniMax-H3-Prompt-Enhancer', '0001-proya-autonomous-h3.patch'), 'utf8');
     const transportPatchText = readFileSync(join(process.cwd(), 'patches', 'ComfyUI-MiniMax-H3-Prompt-Enhancer', '0002-proya-direct-qwen-timeout.patch'), 'utf8');
     const tokenOwnershipPatchText = readFileSync(join(process.cwd(), 'patches', 'ComfyUI-MiniMax-H3-Prompt-Enhancer', '0003-proya-lmstudio-managed-output-tokens.patch'), 'utf8');
+    const finalizationPatchText = readFileSync(join(process.cwd(), 'patches', 'ComfyUI-MiniMax-H3-Prompt-Enhancer', '0004-proya-qwen-finalization.patch'), 'utf8');
     expect(patchText).toContain('"timeout_seconds": ("INT", {"default": 600');
     expect(tokenOwnershipPatchText).toContain('native_payload["max_output_tokens"] = int(max_tokens)');
     expect(tokenOwnershipPatchText).toContain('payload["max_tokens"] = int(max_tokens)');
@@ -194,6 +197,9 @@ describe('RemoteComfyComputeProvider', () => {
     expect(patchText).toContain('from .prompt_enhancer import PROMPT_ENGINE_MODEL_ID, enhance_prompt');
     expect(patchText).toContain('from prompt_enhancer import PROMPT_ENGINE_MODEL_ID, enhance_prompt');
     expect(patchText).toContain('"default": PROMPT_ENGINE_MODEL_ID');
+    expect(finalizationPatchText).toContain('PROMPT_VALIDATION_FAILED');
+    expect(finalizationPatchText).toContain('PROYA_LLM_CLEANUP');
+    expect(finalizationPatchText).toContain('/proya/auto/qwen-recovery');
     const appliedSource = patchText.split(/\r?\n/).filter((line) => !line.startsWith('-')).join('\n');
     expect(appliedSource).not.toContain('"reasoning": "off"');
     expect(appliedSource).not.toContain('chat_template_kwargs');
@@ -314,7 +320,7 @@ describe('RemoteComfyComputeProvider', () => {
     const workflowPath = join(process.cwd(), 'workflows', 'minimax-h3-api.json');
     let posted: Record<string, unknown> | undefined;
     const fetchImpl: ComfyFetch = async (input, init) => {
-      if (String(input).endsWith('/system_stats')) return new Response(JSON.stringify({ system: { comfyui_version: 'test' }, devices: [{ name: 'RTX 5090' }] }), { status: 200 });
+      if (new URL(input).pathname === '/system_stats') return new Response(JSON.stringify({ system: { comfyui_version: 'test' }, devices: [{ name: 'RTX 5090' }] }), { status: 200 });
       posted = JSON.parse(String(init?.body)) as Record<string, unknown>;
       return new Response(JSON.stringify({ prompt_id: remotePromptId, number: 4 }), { status: 200 });
     };
@@ -337,7 +343,7 @@ describe('RemoteComfyComputeProvider', () => {
       baseUrl: 'https://comfy.example.test',
       workflowPath: join(process.cwd(), 'workflows', 'minimax-h3-api.json'),
       fetchImpl: async (input, init) => {
-        if (String(input).endsWith('/system_stats')) return new Response(JSON.stringify({ system: { comfyui_version: 'test' } }), { status: 200 });
+        if (new URL(input).pathname === '/system_stats') return new Response(JSON.stringify({ system: { comfyui_version: 'test' } }), { status: 200 });
         posted = JSON.parse(String(init?.body)) as Record<string, unknown>;
         return new Response(JSON.stringify({ prompt_id: remotePromptId, number: 1 }), { status: 200 });
       },
@@ -396,11 +402,13 @@ describe('RemoteComfyComputeProvider', () => {
     expect(enhancer.inputs.disable_thinking).toBe(true);
     expect(enhancer.inputs.system_prompt_override).toBe(request.systemPromptOverride);
     expect(workflow['150'].inputs.prompt).toEqual(['149', 0]);
-    expect(workflow['151'].inputs.valid).toEqual(['150', 1]);
-    expect(workflow['152'].inputs.prompt).toEqual(['151', 0]);
+    expect(workflow['152'].inputs.valid).toEqual(['150', 1]);
+    expect(workflow['151'].inputs.valid).toEqual(['152', 1]);
+    expect(workflow['151'].inputs.unload_succeeded).toEqual(['152', 3]);
+    expect(workflow['152'].inputs.prompt).toEqual(['150', 0]);
     expect(workflow['152'].inputs.model).toEqual(['149', 8]);
     expect(workflow['152'].inputs.instance_id).toEqual(['149', 9]);
-    expect(workflow['136'].inputs.prompt).toEqual(['152', 0]);
+    expect(workflow['136'].inputs.prompt).toEqual(['151', 0]);
     expect(workflow['138'].inputs.value).toBe('');
     expect(JSON.stringify(workflow)).not.toContain('subject_definitions');
     expect(lifecycle.map((next) => next.pipelineStage)).toEqual(expect.arrayContaining(['PREPARING', 'WRITING_PROMPT', 'QUEUED_H3']));
@@ -498,7 +506,7 @@ describe('RemoteComfyComputeProvider', () => {
       workflowPath: join(process.cwd(), 'workflows', 'minimax-h3-api.json'),
       fetchImpl: async (input) => {
         const url = String(input);
-        if (url.endsWith('/system_stats')) return new Response(JSON.stringify({ system: { comfyui_version: 'test' } }), { status: 200 });
+        if (new URL(url).pathname === '/system_stats') return new Response(JSON.stringify({ system: { comfyui_version: 'test' } }), { status: 200 });
         if (url.endsWith('/object_info')) return new Response(JSON.stringify(patchedPromptEngineObjectInfo()), { status: 200 });
         if (url.endsWith('/minimax_h3_prompt_enhancer/models')) return new Response('LM Studio stopped', { status: 503 });
         if (url.endsWith('/prompt')) promptPosted = true;
@@ -521,7 +529,7 @@ describe('RemoteComfyComputeProvider', () => {
       workflowPath: join(process.cwd(), 'workflows', 'minimax-h3-api.json'),
       fetchImpl: async (input) => {
         const url = String(input);
-        if (url.endsWith('/system_stats')) return new Response(JSON.stringify({ system: { comfyui_version: 'test' } }), { status: 200 });
+        if (new URL(url).pathname === '/system_stats') return new Response(JSON.stringify({ system: { comfyui_version: 'test' } }), { status: 200 });
         if (url.endsWith('/object_info')) return new Response(JSON.stringify({ MiniMaxH3PromptEnhancer: {}, MiniMaxH3PromptValidator: {} }), { status: 200 });
         if (url.endsWith('/minimax_h3_prompt_enhancer/models')) { discoveryCalled = true; return new Response(JSON.stringify({ models: [autonomousEngine.model] }), { status: 200 }); }
         if (url.endsWith('/prompt')) promptPosted = true;
@@ -549,7 +557,7 @@ describe('RemoteComfyComputeProvider', () => {
     });
     const fetchImpl: ComfyFetch = async (input) => {
       const url = String(input);
-      if (url.endsWith('/system_stats')) return new Response(JSON.stringify({ system: { comfyui_version: 'test' } }), { status: 200 });
+      if (new URL(url).pathname === '/system_stats') return new Response(JSON.stringify({ system: { comfyui_version: 'test' } }), { status: 200 });
       if (url.endsWith('/object_info')) return new Response(JSON.stringify(patchedPromptEngineObjectInfo()), { status: 200 });
       if (url.endsWith('/minimax_h3_prompt_enhancer/models')) return new Response(JSON.stringify({ models: [autonomousEngine.model] }), { status: 200 });
       if (url.endsWith('/upload/image')) return new Response('upload failed', { status: 503 });
@@ -571,7 +579,7 @@ describe('RemoteComfyComputeProvider', () => {
       workflowPath: join(process.cwd(), 'workflows', 'minimax-h3-api.json'),
       fetchImpl: async (input, init) => {
         const url = String(input);
-        if (url.endsWith('/system_stats')) return new Response(JSON.stringify({ system: { comfyui_version: 'test' } }), { status: 200 });
+        if (new URL(url).pathname === '/system_stats') return new Response(JSON.stringify({ system: { comfyui_version: 'test' } }), { status: 200 });
         if (url.endsWith('/object_info')) return new Response(JSON.stringify(patchedPromptEngineObjectInfo()), { status: 200 });
         if (url.endsWith('/minimax_h3_prompt_enhancer/models')) return new Response(JSON.stringify({ models: [autonomousEngine.model] }), { status: 200 });
         if (url.endsWith('/prompt')) {
@@ -594,7 +602,7 @@ describe('RemoteComfyComputeProvider', () => {
       baseUrl: 'https://comfy.example.test',
       workflowPath: join(process.cwd(), 'workflows', 'minimax-h3-api.json'),
       fetchImpl: async (input, init) => {
-        if (String(input).endsWith('/system_stats')) return new Response(JSON.stringify({}), { status: 200 });
+        if (new URL(input).pathname === '/system_stats') return new Response(JSON.stringify({}), { status: 200 });
         posted = JSON.parse(String(init?.body)) as Record<string, unknown>;
         return new Response(JSON.stringify({ prompt_id: 'legacy-local-job-123', number: 1 }), { status: 200 });
       },
@@ -614,7 +622,7 @@ describe('RemoteComfyComputeProvider', () => {
     let posted: Record<string, unknown> | undefined;
     const fetchImpl: ComfyFetch = async (input, init) => {
       const url = String(input);
-      if (url.endsWith('/system_stats')) return new Response(JSON.stringify({ system: { comfyui_version: 'test' } }), { status: 200 });
+      if (new URL(url).pathname === '/system_stats') return new Response(JSON.stringify({ system: { comfyui_version: 'test' } }), { status: 200 });
       if (url.endsWith('/upload/image')) {
         uploadCount += 1;
         const form = init?.body as FormData;
@@ -642,7 +650,7 @@ describe('RemoteComfyComputeProvider', () => {
     let posted: Record<string, unknown> | undefined;
     const fetchImpl: ComfyFetch = async (input, init) => {
       const url = String(input);
-      if (url.endsWith('/system_stats')) return new Response(JSON.stringify({ system: { comfyui_version: 'test' } }), { status: 200 });
+      if (new URL(url).pathname === '/system_stats') return new Response(JSON.stringify({ system: { comfyui_version: 'test' } }), { status: 200 });
       posted = JSON.parse(String(init?.body)) as Record<string, unknown>;
       return new Response(JSON.stringify({ prompt_id: remotePromptId, number: 1 }), { status: 200 });
     };
@@ -670,7 +678,7 @@ describe('RemoteComfyComputeProvider', () => {
     let posted: Record<string, unknown> | undefined;
     const fetchImpl: ComfyFetch = async (input, init) => {
       const url = String(input);
-      if (url.endsWith('/system_stats')) return new Response(JSON.stringify({ system: { comfyui_version: 'test' } }), { status: 200 });
+      if (new URL(url).pathname === '/system_stats') return new Response(JSON.stringify({ system: { comfyui_version: 'test' } }), { status: 200 });
       if (url.endsWith('/upload/image')) {
         uploadCount += 1;
         return new Response(JSON.stringify({ name: 'explicitly-authorized.png', subfolder: '', type: 'input' }), { status: 200 });
@@ -708,7 +716,7 @@ describe('RemoteComfyComputeProvider', () => {
     const fetchImpl: ComfyFetch = async (input) => {
       const url = String(input);
       calls.push(url);
-      if (url.endsWith('/system_stats')) return new Response(JSON.stringify({}), { status: 200 });
+      if (new URL(url).pathname === '/system_stats') return new Response(JSON.stringify({}), { status: 200 });
       if (url.endsWith('/upload/image')) return new Response('upload failed', { status: 503 });
       return new Response(JSON.stringify({ prompt_id: 'must-not-queue' }), { status: 200 });
     };
@@ -726,7 +734,7 @@ describe('RemoteComfyComputeProvider', () => {
     let uploadCount = 0;
     const fetchImpl: ComfyFetch = async (input) => {
       const url = String(input);
-      if (url.endsWith('/system_stats')) return new Response(JSON.stringify({}), { status: 200 });
+      if (new URL(url).pathname === '/system_stats') return new Response(JSON.stringify({}), { status: 200 });
       if (url.endsWith('/upload/image')) {
         uploadCount += 1;
         return new Response(JSON.stringify({ name: 'cached-reference.webp', subfolder: '', type: 'input' }), { status: 200 });
@@ -760,9 +768,9 @@ describe('RemoteComfyComputeProvider', () => {
       workflowPath: join(process.cwd(), 'workflows', 'minimax-h3-api.json'),
       fetchImpl: async (input) => {
         const url = String(input);
-        if (url.endsWith('/system_stats')) return new Response(JSON.stringify({ system: { comfyui_version: 'test' } }), { status: 200 });
+        if (new URL(url).pathname === '/system_stats') return new Response(JSON.stringify({ system: { comfyui_version: 'test' } }), { status: 200 });
         if (url.endsWith('/prompt')) return new Response(JSON.stringify({ prompt_id: remotePromptId, number: 1 }), { status: 200 });
-        if (url.includes(`/history/${remotePromptId}`) || url.endsWith('/queue')) return new Response(JSON.stringify({}), { status: 200 });
+        if (url.includes(`/history/${remotePromptId}`) || new URL(url).pathname === '/queue') return new Response(JSON.stringify({}), { status: 200 });
         return new Response(JSON.stringify({}), { status: 200 });
       },
       webSocketFactory: () => {
@@ -830,15 +838,88 @@ describe('RemoteComfyComputeProvider', () => {
     for (let attempt = 0; attempt < 20 && !socketHolder.current?.onmessage; attempt += 1) await new Promise((resolveWait) => setTimeout(resolveWait, 5));
     const socket = socketHolder.current;
     if (!socket?.onmessage) throw new Error('WebSocket was not created');
-    socket.onmessage({ data: JSON.stringify({ type: 'execution_error', data: { prompt_id: remotePromptId, node: '149', exception_message: 'Client disconnected. Stopping generation…' } }) });
-    expect(states.at(-1)).toMatchObject({ status: 'failed', currentNode: '149', pipelineStage: 'PROMPT_GENERATION_TIMEOUT', failureStage: 'PROMPT_GENERATION_TIMEOUT', llmTimeoutSeconds: 600, llmRepairAttempts: 2, llmDisableThinking: true });
+    socket.onmessage({ data: JSON.stringify({ type: 'execution_error', data: { prompt_id: remotePromptId, node: '149', exception_message: 'Client disconnected. Stopping generation… [PROYA_LLM_CLEANUP]{"unload_requested":true,"unload_succeeded":true,"unload_error":null,"instance_id":"timeout-qwen-instance","unload_duration_ms":88}' } }) });
+    expect(states.at(-1)).toMatchObject({ status: 'failed', currentNode: '149', pipelineStage: 'PROMPT_GENERATION_TIMEOUT', failureStage: 'PROMPT_GENERATION_TIMEOUT', llmTimeoutSeconds: 600, llmRepairAttempts: 2, llmDisableThinking: true, llmUnloadRequested: true, llmUnloadSucceeded: true, llmInstanceId: 'timeout-qwen-instance', llmUnloadDurationMs: 88 });
     expect(states.at(-1)).not.toHaveProperty('llmMaxTokens');
     expect(states.at(-1)?.llmModel ?? null).toBe(h3PromptEngineModelId);
     expect(states.at(-1)?.error).toContain('600-second');
     stop();
   });
 
-  it('blocks H3 when the validator remains invalid after the enhancer repairs', async () => {
+  it('recovers one stale Qwen instance, then frees ComfyUI caches and records diagnostics', async () => {
+    const calls: string[] = [];
+    let statsCalls = 0;
+    const remote = new RemoteComfyComputeProvider({
+      baseUrl: 'https://comfy.example.test',
+      workflowPath: join(process.cwd(), 'workflows', 'minimax-h3-api.json'),
+      fetchImpl: async (input) => {
+        const path = new URL(input).pathname;
+        calls.push(path);
+        if (path === '/system_stats') {
+          statsCalls += 1;
+          return new Response(JSON.stringify({ devices: [{ type: 'cuda', vram_total: 32 * 1024 ** 3, vram_free: statsCalls > 2 ? 31 * 1024 ** 3 : 20 * 1024 ** 3 }] }));
+        }
+        if (path === '/proya/auto/qwen-recovery') return new Response(JSON.stringify({
+          activePromptJob: false,
+          staleQwenDetected: true,
+          staleQwenInstanceId: 'stale-qwen-instance',
+          staleQwenUnloadAttempted: true,
+          staleQwenUnloadSucceeded: true,
+          staleQwenUnloadError: null
+        }));
+        if (path === '/queue') return new Response(JSON.stringify({ queue_running: [], queue_pending: [] }));
+        if (path === '/free') return new Response(null);
+        throw new Error(`unexpected recovery request ${path}`);
+      },
+      webSocketFactory: undefined
+    });
+
+    await expect(remote.recoverStaleQwen()).resolves.toMatchObject({
+      staleQwenDetected: true,
+      staleQwenInstanceId: 'stale-qwen-instance',
+      staleQwenUnloadAttempted: true,
+      staleQwenUnloadSucceeded: true,
+      comfyFreeAttempted: true,
+      comfyFreeSucceeded: true,
+      observedFreeVram: 31 * 1024 ** 3
+    });
+    expect(calls).toContain('/proya/auto/qwen-recovery');
+    expect(calls).toContain('/free');
+  });
+
+  it('does not free or recover Qwen while an active prompt owns the queue', async () => {
+    const calls: string[] = [];
+    const remote = new RemoteComfyComputeProvider({
+      baseUrl: 'https://comfy.example.test',
+      workflowPath: join(process.cwd(), 'workflows', 'minimax-h3-api.json'),
+      fetchImpl: async (input) => {
+        const path = new URL(input).pathname;
+        calls.push(path);
+        if (path === '/system_stats') return new Response(JSON.stringify({ devices: [{ type: 'cuda', vram_total: 32 * 1024 ** 3, vram_free: 4 * 1024 ** 3 }] }));
+        if (path === '/proya/auto/qwen-recovery') return new Response(JSON.stringify({
+          activePromptJob: true,
+          staleQwenDetected: false,
+          staleQwenInstanceId: null,
+          staleQwenUnloadAttempted: false,
+          staleQwenUnloadSucceeded: null,
+          staleQwenUnloadError: 'active prompt'
+        }));
+        if (path === '/free') throw new Error('must not free an active prompt');
+        throw new Error(`unexpected recovery request ${path}`);
+      },
+      webSocketFactory: undefined
+    });
+
+    await expect(remote.recoverStaleQwen()).resolves.toMatchObject({
+      activePromptJob: true,
+      staleQwenUnloadAttempted: false,
+      comfyFreeAttempted: false,
+      observedFreeVram: 4 * 1024 ** 3
+    });
+    expect(calls).not.toContain('/free');
+  });
+
+  it('unloads the exact Qwen instance before the validity gate blocks H3', async () => {
     const socketHolder: { current: ComfyWebSocket | null } = { current: null };
     const provider = new RemoteComfyComputeProvider({
       baseUrl: 'https://comfy.example.test',
@@ -857,9 +938,39 @@ describe('RemoteComfyComputeProvider', () => {
     for (let attempt = 0; attempt < 20 && !socketHolder.current?.onmessage; attempt += 1) await new Promise((resolveWait) => setTimeout(resolveWait, 5));
     const socket = socketHolder.current;
     if (!socket?.onmessage) throw new Error('WebSocket was not created');
-    socket.onmessage({ data: JSON.stringify({ type: 'executed', data: { prompt_id: remotePromptId, node: '149', output: { result: ['INVALID PROMPT', '', JSON.stringify({ repairAttemptsUsed: 2 })] } } }) });
-    socket.onmessage({ data: JSON.stringify({ type: 'execution_error', data: { prompt_id: remotePromptId, node: '151', exception_message: 'invalid after all repair attempts' } }) });
-    expect(states.at(-1)).toMatchObject({ status: 'failed', pipelineStage: 'PROMPT_VALIDATION_FAILED', failureStage: 'PROMPT_VALIDATION_FAILED', finalEnhancedPrompt: 'INVALID PROMPT', repairAttemptsUsed: 2 });
+    socket.onmessage({ data: JSON.stringify({ type: 'executed', data: { prompt_id: remotePromptId, node: '149', output: { result: ['INVALID PROMPT', '', JSON.stringify({ repairAttemptsUsed: 2, model_id: h3PromptEngineModelId, model_instance_id: 'exact-qwen-instance' })] } } }) });
+    socket.onmessage({ data: JSON.stringify({ type: 'executed', data: { prompt_id: remotePromptId, node: '150', output: { result: ['INVALID PROMPT', false, 'invalid after all repair attempts'] } } }) });
+    socket.onmessage({ data: JSON.stringify({ type: 'executed', data: { prompt_id: remotePromptId, node: '152', output: { result: ['INVALID PROMPT', false, 'invalid after all repair attempts', true, '', 'exact-qwen-instance', 321] } } }) });
+    socket.onmessage({ data: JSON.stringify({ type: 'execution_error', data: { prompt_id: remotePromptId, node: '151', exception_message: 'PROMPT_VALIDATION_FAILED: invalid after all repair attempts' } }) });
+    expect(states.at(-1)).toMatchObject({ status: 'failed', pipelineStage: 'PROMPT_VALIDATION_FAILED', failureStage: 'PROMPT_VALIDATION_FAILED', finalEnhancedPrompt: 'INVALID PROMPT', validationReport: 'invalid after all repair attempts', repairAttemptsUsed: 2, llmUnloadRequested: true, llmUnloadSucceeded: true, llmInstanceId: 'exact-qwen-instance', llmUnloadDurationMs: 321 });
+    expect(states.at(-1)?.currentNode).toBe('151');
+    expect(states.some((next) => next.currentNode === '136' || next.currentNode === '125')).toBe(false);
+    stop();
+  });
+
+  it('retains validator validity failure when exact unload itself fails', async () => {
+    const socketHolder: { current: ComfyWebSocket | null } = { current: null };
+    const provider = new RemoteComfyComputeProvider({
+      baseUrl: 'https://comfy.example.test',
+      workflowPath: join(process.cwd(), 'workflows', 'minimax-h3-api.json'),
+      fetchImpl: autonomousDiscoveryFetch(() => undefined),
+      webSocketFactory: () => {
+        const socket: ComfyWebSocket = { onopen: null, onmessage: null, onerror: null, onclose: null, close: () => undefined };
+        socketHolder.current = socket;
+        return socket;
+      },
+      pollIntervalMs: 250
+    });
+    await provider.submitH3(autonomousRequest());
+    const states: ComputeJobState[] = [];
+    const stop = provider.watchJob(remotePromptId, (next) => states.push(next));
+    for (let attempt = 0; attempt < 20 && !socketHolder.current?.onmessage; attempt += 1) await new Promise((resolveWait) => setTimeout(resolveWait, 5));
+    const socket = socketHolder.current;
+    if (!socket?.onmessage) throw new Error('WebSocket was not created');
+    socket.onmessage({ data: JSON.stringify({ type: 'executed', data: { prompt_id: remotePromptId, node: '150', output: { result: ['VALID PROMPT', true, 'valid'] } } }) });
+    socket.onmessage({ data: JSON.stringify({ type: 'executed', data: { prompt_id: remotePromptId, node: '152', output: { result: ['VALID PROMPT', true, 'valid', false, 'LM Studio unload timed out', 'exact-qwen-instance', 1200] } } }) });
+    socket.onmessage({ data: JSON.stringify({ type: 'execution_error', data: { prompt_id: remotePromptId, node: '151', exception_message: 'LLM_UNLOAD_FAILED: LM Studio unload timed out' } }) });
+    expect(states.at(-1)).toMatchObject({ status: 'failed', pipelineStage: 'LLM_UNLOAD_FAILED', failureStage: 'LLM_UNLOAD_FAILED', llmUnloadRequested: true, llmUnloadSucceeded: false, llmUnloadError: 'LM Studio unload timed out', llmInstanceId: 'exact-qwen-instance' });
     stop();
   });
 
@@ -962,13 +1073,13 @@ describe('Auto H3 provider identity and lost response integration', () => {
     const lifecycle: ComputeJobState[] = [];
     const provider = new RemoteComfyComputeProvider({ baseUrl: 'https://comfy.example.test', workflowPath: join(process.cwd(), 'workflows/minimax-h3-api.json'), fetchImpl: async (input, init) => {
       const url = String(input);
-      if (url.endsWith('/system_stats')) return new Response(JSON.stringify({ system: { comfyui_version: 'test' } }));
+      if (new URL(url).pathname === '/system_stats') return new Response(JSON.stringify({ system: { comfyui_version: 'test' } }));
       if (url.endsWith('/prompt')) {
         postCount++; posted = JSON.parse(String(init?.body));
         expect(lifecycle.some(s => s.submissionJson?.includes(identity))).toBe(true);
         throw new Error('Cloudflare connection reset after acceptance');
       }
-      if (url.endsWith('/queue')) return new Response(JSON.stringify({ queue_running: [[0, remotePromptId, posted.prompt, posted.extra_data]], queue_pending: [] }));
+      if (new URL(url).pathname === '/queue') return new Response(JSON.stringify({ queue_running: [[0, remotePromptId, posted.prompt, posted.extra_data]], queue_pending: [] }));
       return new Response('{}');
     } });
     const result = await provider.submitH3(validRequest({ localJobId: identity, autoJobId: identity, autoSessionId: 'session', autoCycleNumber: 2 }), state => lifecycle.push(state));

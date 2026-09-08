@@ -6,8 +6,68 @@ import folder_paths
 import comfy.model_management
 from server import PromptServer
 from .auto_archive import check_root, copy_verified, within
+from .prompt_enhancer import inspect_prompt_model, unload_prompt_model_instance
 
 _archive_lock = asyncio.Lock()
+
+
+def _qwen_recovery(endpoint, api_key):
+    """Inspect/unload Qwen while the ComfyUI queue mutex prevents a new job."""
+    queue = PromptServer.instance.prompt_queue
+    with queue.mutex:
+        running = list(getattr(queue, "currently_running", {}).values())
+        pending_queue = getattr(queue, "queue", ())
+        pending = list(pending_queue) if pending_queue is not None else []
+        if running or pending:
+            return {
+                "activePromptJob": True,
+                "staleQwenDetected": False,
+                "staleQwenInstanceId": None,
+                "staleQwenUnloadAttempted": False,
+                "staleQwenUnloadSucceeded": None,
+                "staleQwenUnloadError": "An active or queued ComfyUI prompt owns the execution queue; Qwen cleanup was skipped.",
+            }
+        observation = inspect_prompt_model(endpoint, api_key, 20)
+        instance_ids = observation["instance_ids"]
+        result = {
+            "activePromptJob": False,
+            "staleQwenDetected": bool(instance_ids),
+            "staleQwenInstanceId": instance_ids[0] if len(instance_ids) == 1 else None,
+            "staleQwenUnloadAttempted": False,
+            "staleQwenUnloadSucceeded": None,
+            "staleQwenUnloadError": None,
+        }
+        if len(instance_ids) > 1:
+            result["staleQwenUnloadError"] = "Multiple loaded canonical Qwen instances were found; refusing to guess which stale instance to unload."
+            return result
+        if len(instance_ids) == 1:
+            result["staleQwenUnloadAttempted"] = True
+            unloaded = unload_prompt_model_instance(endpoint, instance_ids[0], api_key, 20)
+            result["staleQwenUnloadSucceeded"] = bool(unloaded["unload_succeeded"])
+            result["staleQwenUnloadError"] = unloaded["unload_error"]
+        return result
+
+
+@PromptServer.instance.routes.post("/proya/auto/qwen-recovery")
+async def qwen_recovery(request):
+    try:
+        body = await request.json()
+        result = await asyncio.to_thread(
+            _qwen_recovery,
+            body.get("endpoint", "http://127.0.0.1:1234/v1"),
+            body.get("api_key", ""),
+        )
+        return web.json_response(result)
+    except Exception as exc:
+        return web.json_response({
+            "activePromptJob": False,
+            "staleQwenDetected": False,
+            "staleQwenInstanceId": None,
+            "staleQwenUnloadAttempted": False,
+            "staleQwenUnloadSucceeded": None,
+            "staleQwenUnloadError": None,
+            "qwenRecoveryError": str(exc),
+        })
 
 
 @PromptServer.instance.routes.post("/proya/auto/archive/check")

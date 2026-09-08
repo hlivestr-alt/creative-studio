@@ -50,6 +50,7 @@ export const h3PipelineStages = [
   'LLM_UNLOAD_FAILED',
   'H3_QUEUE_FAILED',
   'H3_GENERATION_FAILED',
+  'REMOTE_STATE_LOST',
   'DOWNLOAD_FAILED'
 ] as const;
 export type H3PipelineStage = (typeof h3PipelineStages)[number];
@@ -212,9 +213,76 @@ export interface H3VramReleaseAudit {
   h3VramReleaseError?: string | null;
   h3VramBeforeRelease?: H3VramSnapshot | null;
   h3VramAfterRelease?: H3VramSnapshot | null;
+  h3FreeRequestUrl?: string | null;
+  h3FreeRequestBody?: string | null;
+  h3FreeRequestStatus?: number | null;
+  h3FreeRequestResult?: string | null;
+  h3VramRequiredFreeBytes?: number | null;
+  h3VramVerification?: 'PASSED' | 'FAILED' | 'UNAVAILABLE' | null;
+  h3VramPollAttempts?: number;
+  h3VramPostMeasurementFresh?: boolean;
 }
 
-export interface ComputeJobState extends H3VramReleaseAudit {
+/** Authorization emitted only after the authoritative lifecycle classifier proves completion. */
+export interface H3VramReleaseAuthorization {
+  previousJobId: string;
+  previousPromptId: string;
+  completionProven: true;
+  completionEvidence: 'history' | 'output' | 'china_archive';
+}
+
+/** Exact remote evidence used when deciding whether the H3/Qwen handoff is safe. */
+export type H3RemoteQueueState = 'queue_running' | 'queue_pending' | 'empty' | 'busy_other' | 'not_checked' | 'unavailable';
+export type H3RemoteHistoryState = 'completed' | 'failed' | 'running' | 'queued' | 'missing' | 'not_checked' | 'unavailable';
+export type H3RemoteLifecycleState = 'ACTIVE' | 'ORPHANED_REMOTE_PROMPT' | 'RECOVERED_COMPLETED' | 'REMOTE_STATE_LOST' | 'COMPLETED';
+
+/** Durable diagnostics for a stale/local H3 lifecycle reconciliation. */
+export interface H3LifecycleDiagnostics {
+  previousJobId: string | null;
+  previousPromptId: string | null;
+  h3WasSubmitted: boolean;
+  remoteQueueState: H3RemoteQueueState;
+  historyState: H3RemoteHistoryState;
+  outputCaptured: boolean;
+  chinaArchived: boolean;
+  vramReleaseRequested: boolean | null;
+  vramReleaseSucceeded: boolean | null;
+  reasonForBlocking: string | null;
+  queueSampleTimestamp?: string | null;
+  queueRequestUrl?: string | null;
+  queueFreshness?: 'FRESH' | 'UNAVAILABLE' | null;
+  historySampleTimestamp?: string | null;
+  historyRequestUrl?: string | null;
+  historyFreshness?: 'FRESH' | 'UNAVAILABLE' | null;
+  completionEvidence?: 'OUTPUT' | 'CHINA_ARCHIVE' | 'HISTORY' | 'NONE' | null;
+  classifierResult?: string | null;
+  classifierTimestamp?: string | null;
+  releaseAuthorized?: boolean | null;
+  freeAttempted?: boolean | null;
+  /** Control-plane classification used when the remote prompt record disappears. */
+  remoteLifecycleState?: H3RemoteLifecycleState | null;
+  /** Persisted bounded orphan checks; this prevents an orphan from blocking forever. */
+  orphanReconciliationAttempts?: number;
+  orphanFirstObservedAt?: string | null;
+  orphanLastCheckedAt?: string | null;
+  orphanRecoverySource?: 'recent_history' | 'persisted_output' | 'china_archive' | null;
+}
+
+/** Diagnostics captured while recovering a stale LM Studio prompt-model instance before Qwen/H3 handoff. */
+export interface QwenRecoveryAudit {
+  activePromptJob?: boolean | null;
+  staleQwenDetected?: boolean | null;
+  staleQwenInstanceId?: string | null;
+  staleQwenUnloadAttempted?: boolean | null;
+  staleQwenUnloadSucceeded?: boolean | null;
+  staleQwenUnloadError?: string | null;
+  comfyFreeAttempted?: boolean | null;
+  comfyFreeSucceeded?: boolean | null;
+  observedFreeVram?: number | null;
+  qwenRecoveryError?: string | null;
+}
+
+export interface ComputeJobState extends H3VramReleaseAudit, QwenRecoveryAudit {
   /** Creative Studio's stable local identifier for this tracked job. */
   localJobId: string | null;
   /** The authoritative prompt identifier returned by ComfyUI. */
@@ -271,6 +339,25 @@ export interface ComputeJobState extends H3VramReleaseAudit {
   llmInstanceId?: string | null;
   llmUnloadDurationMs?: number | null;
   stageTimings?: Record<string, number>;
+  /** Remote/local evidence captured while reconciling the H3/Qwen handoff. */
+  h3LifecycleDiagnostics?: H3LifecycleDiagnostics;
+}
+
+/** One authoritative snapshot of a ComfyUI prompt's queue/history lifecycle. */
+export interface H3RemoteLifecycleInspection {
+  queueState: H3RemoteQueueState;
+  historyState: H3RemoteHistoryState;
+  remoteState: ComputeJobState | null;
+  outputCaptured: boolean;
+  /** A recent /history scan can recover a prompt whose UUID was lost locally. */
+  recoveredPromptId?: string | null;
+  recoverySource?: 'recent_history' | null;
+  queueSampleTimestamp?: string | null;
+  queueRequestUrl?: string | null;
+  queueFreshness?: 'FRESH' | 'UNAVAILABLE' | null;
+  historySampleTimestamp?: string | null;
+  historyRequestUrl?: string | null;
+  historyFreshness?: 'FRESH' | 'UNAVAILABLE' | null;
 }
 
 export interface RemoteH3GenerationRequest {

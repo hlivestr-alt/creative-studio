@@ -3,7 +3,7 @@ import { isTransientTransport } from '../../src/domain/auto-h3';
 import { createHash, randomInt } from 'node:crypto';
 import { existsSync, readFileSync } from 'node:fs';
 import { isAbsolute, relative, resolve } from 'node:path';
-import type { AppSettings, ComfyOutputFile, ComputeJobState, H3PipelineStage, H3PromptEngineStatus, H3WorkflowAspectRatio, H3WorkflowSettings, RemoteComfySystemInfo, RemoteH3GenerationRequest, RemoteH3JobRecord } from '../../src/domain/types';
+import type { AppSettings, ComfyOutputFile, ComputeJobState, H3LifecycleDiagnostics, H3PipelineStage, H3PromptEngineStatus, H3RemoteLifecycleInspection, H3RemoteLifecycleState, H3WorkflowAspectRatio, H3WorkflowSettings, QwenRecoveryAudit, RemoteComfySystemInfo, RemoteH3GenerationRequest, RemoteH3JobRecord } from '../../src/domain/types';
 import { buildH3ReferenceContext, serializeH3GenerationBrief } from '../../src/domain/h3-generation-brief';
 import { normalizeAutonomousH3PromptEngineSettings, readH3WorkflowTemplateDefaults, validateH3PromptEngineSettings, validateH3WorkflowSettings } from '../../src/domain/minimax-h3-workflow';
 import { classifyH3PromptEngineError, findComfyVideoOutputs, h3PromptEngineAudit, h3PromptEngineErrorMessage, isCanonicalComfyPromptId, LocalComputeProvider, normalizeComfyUrl, RemoteComfyComputeProvider, type ComfyAuth, type ComputeProvider } from './compute-provider';
@@ -105,6 +105,144 @@ function isRemoteTracked(status: ComputeJobState['status']): boolean {
   return status === 'submitted' || status === 'queued' || status === 'running';
 }
 
+export const previousH3GuardMessage = 'The previous H3 job is not finished. Wait for execution and VRAM release before starting Qwen.';
+const orphanReconciliationIntervalMs = 5_000;
+const orphanReconciliationMaxChecks = 3;
+
+export interface AutoH3OutputEvidence {
+  outputs: ComfyOutputFile[];
+  /** A verified China archive is proof that this exact Auto Run job produced an MP4. */
+  chinaArchived: boolean;
+  chinaArchivePath: string | null;
+  laptopDownloaded: boolean;
+}
+
+function isPromptValidationFailure(state: ComputeJobState): boolean {
+  return state.failureStage === 'PROMPT_VALIDATION_FAILED' || state.pipelineStage === 'PROMPT_VALIDATION_FAILED';
+}
+
+/** A validation gate failure proves that the H3 sampler was never entered. */
+function h3SamplingWasSubmitted(state: ComputeJobState): boolean {
+  return isCanonicalComfyPromptId(state.remotePromptId) && !isPromptValidationFailure(state);
+}
+
+function requiresH3VramRelease(state: ComputeJobState): boolean {
+  const remoteLifecycleState = state.h3LifecycleDiagnostics?.remoteLifecycleState;
+  return isCanonicalComfyPromptId(state.remotePromptId)
+    && !isPromptValidationFailure(state)
+    && remoteLifecycleState !== 'ORPHANED_REMOTE_PROMPT'
+    && remoteLifecycleState !== 'REMOTE_STATE_LOST';
+}
+
+function canProveNeverSubmitted(record: RemoteH3JobRecord, state: ComputeJobState): boolean {
+  // Auto Run persists the exact submission body before POST /prompt. A
+  // missing body is therefore authoritative for Auto Run; manual jobs do not
+  // have that guarantee and remain fail-closed unless the validation gate is
+  // itself the terminal evidence.
+  return isPromptValidationFailure(state) || Boolean(record.request.autoJobId && !state.submissionJson);
+}
+
+function lifecycleDiagnostics(
+  state: ComputeJobState,
+  previousJobId: string,
+  request: RemoteH3GenerationRequest,
+  patch: Partial<H3LifecycleDiagnostics> = {}
+): H3LifecycleDiagnostics {
+  const previous = state.h3LifecycleDiagnostics;
+  return {
+    previousJobId: previous?.previousJobId ?? previousJobId,
+    previousPromptId: previous?.previousPromptId ?? state.remotePromptId,
+    h3WasSubmitted: isPromptValidationFailure(state) ? false : previous?.h3WasSubmitted ?? h3SamplingWasSubmitted(state),
+    remoteQueueState: previous?.remoteQueueState ?? 'not_checked',
+    historyState: previous?.historyState ?? 'not_checked',
+    outputCaptured: Boolean(previous?.outputCaptured || state.outputs.length > 0),
+    chinaArchived: previous?.chinaArchived ?? !request.autoJobId,
+    vramReleaseRequested: state.h3VramReleaseRequested !== undefined ? state.h3VramReleaseRequested : previous?.vramReleaseRequested ?? null,
+    vramReleaseSucceeded: state.h3VramReleaseSucceeded !== undefined ? state.h3VramReleaseSucceeded : previous?.vramReleaseSucceeded ?? null,
+    reasonForBlocking: previous?.reasonForBlocking ?? null,
+    queueSampleTimestamp: previous?.queueSampleTimestamp ?? null,
+    queueRequestUrl: previous?.queueRequestUrl ?? null,
+    queueFreshness: previous?.queueFreshness ?? null,
+    historySampleTimestamp: previous?.historySampleTimestamp ?? null,
+    historyRequestUrl: previous?.historyRequestUrl ?? null,
+    historyFreshness: previous?.historyFreshness ?? null,
+    completionEvidence: previous?.completionEvidence ?? null,
+    classifierResult: previous?.classifierResult ?? null,
+    classifierTimestamp: previous?.classifierTimestamp ?? null,
+    releaseAuthorized: previous?.releaseAuthorized ?? null,
+    freeAttempted: state.h3VramReleaseRequested ?? previous?.freeAttempted ?? null,
+    remoteLifecycleState: previous?.remoteLifecycleState ?? null,
+    orphanReconciliationAttempts: previous?.orphanReconciliationAttempts ?? 0,
+    orphanFirstObservedAt: previous?.orphanFirstObservedAt ?? null,
+    orphanLastCheckedAt: previous?.orphanLastCheckedAt ?? null,
+    orphanRecoverySource: previous?.orphanRecoverySource ?? null,
+    ...patch
+  };
+}
+
+function formatH3GuardMessage(diagnostics: H3LifecycleDiagnostics): string {
+  const detail = [
+    `previousJobId=${diagnostics.previousJobId ?? '—'}`,
+    `previousPromptId=${diagnostics.previousPromptId ?? '—'}`,
+    `h3WasSubmitted=${diagnostics.h3WasSubmitted}`,
+    `remoteQueueState=${diagnostics.remoteQueueState}`,
+    `historyState=${diagnostics.historyState}`,
+    `outputCaptured=${diagnostics.outputCaptured}`,
+    `chinaArchived=${diagnostics.chinaArchived}`,
+    `vramReleaseRequested=${diagnostics.vramReleaseRequested ?? '—'}`,
+    `vramReleaseSucceeded=${diagnostics.vramReleaseSucceeded ?? '—'}`,
+    `reasonForBlocking=${diagnostics.reasonForBlocking ?? 'unknown'}`
+  ].join(' ');
+  return `${previousH3GuardMessage} ${detail}`;
+}
+
+function isOrphanedInspection(inspection: H3RemoteLifecycleInspection): boolean {
+  return inspection.queueState === 'empty'
+    && inspection.historyState === 'missing'
+    && !inspection.recoveredPromptId;
+}
+
+function isRemoteStateLost(state: ComputeJobState): boolean {
+  return state.failureStage === 'REMOTE_STATE_LOST'
+    || state.pipelineStage === 'REMOTE_STATE_LOST'
+    || state.h3LifecycleDiagnostics?.remoteLifecycleState === 'REMOTE_STATE_LOST';
+}
+
+export type PreviousH3LifecycleClassification =
+  | 'RUNNING_REMOTE'
+  | 'PENDING_REMOTE'
+  | 'COMPLETED_NEEDS_OUTPUT_RECOVERY'
+  | 'COMPLETED_NEEDS_ARCHIVE'
+  | 'COMPLETED_NEEDS_VRAM_RELEASE'
+  | 'COMPLETE'
+  | 'ORPHANED_REMOTE_PROMPT'
+  | 'REMOTE_STATE_LOST';
+
+/** The sole precedence table for interpreting previous-H3 lifecycle evidence. */
+export function classifyPreviousH3Lifecycle(
+  state: ComputeJobState,
+  inspection: Pick<H3RemoteLifecycleInspection, 'queueState' | 'historyState'>,
+  exactOutputEvidence: Pick<AutoH3OutputEvidence, 'outputs' | 'chinaArchived'> | null,
+  autoJob = false
+): PreviousH3LifecycleClassification {
+  if (inspection.queueState === 'queue_running' || inspection.historyState === 'running') return 'RUNNING_REMOTE';
+  if (inspection.queueState === 'queue_pending' || inspection.historyState === 'queued') return 'PENDING_REMOTE';
+  const remoteStateLost = isRemoteStateLost(state);
+  const exactOutputCaptured = Boolean(exactOutputEvidence?.outputs.length);
+  const exactChinaArchive = Boolean(exactOutputEvidence?.chinaArchived);
+  const durableCompletionEvidence = exactOutputCaptured || exactChinaArchive;
+  const completionProven = inspection.historyState === 'completed'
+    || inspection.historyState === 'failed'
+    || durableCompletionEvidence
+    || isTerminal(state.status) && !remoteStateLost;
+  if (!completionProven && remoteStateLost) return 'REMOTE_STATE_LOST';
+  if (!completionProven) return 'ORPHANED_REMOTE_PROMPT';
+  if (state.status === 'completed' && !durableCompletionEvidence) return 'COMPLETED_NEEDS_OUTPUT_RECOVERY';
+  if (state.status === 'completed' && autoJob && !exactOutputEvidence?.chinaArchived) return 'COMPLETED_NEEDS_ARCHIVE';
+  if (requiresH3VramRelease(state) && (state.h3VramReleaseSucceeded !== true || state.h3VramReleaseDurationMs == null)) return 'COMPLETED_NEEDS_VRAM_RELEASE';
+  return 'COMPLETE';
+}
+
 function pathWithin(root: string, target: string): boolean {
   const relativePath = relative(resolve(root), resolve(target));
   return relativePath === '' || (!relativePath.startsWith('..') && !isAbsolute(relativePath));
@@ -112,7 +250,7 @@ function pathWithin(root: string, target: string): boolean {
 
 function mergeState(previous: ComputeJobState | undefined, next: ComputeJobState): ComputeJobState {
   if (!previous) return next;
-  return {
+  const merged = {
     ...previous,
     ...next,
     submissionJson: next.submissionJson ?? previous.submissionJson,
@@ -157,8 +295,34 @@ function mergeState(previous: ComputeJobState | undefined, next: ComputeJobState
     llmUnloadError: next.llmUnloadError ?? previous.llmUnloadError,
     llmInstanceId: next.llmInstanceId ?? previous.llmInstanceId,
     llmUnloadDurationMs: next.llmUnloadDurationMs ?? previous.llmUnloadDurationMs,
+    activePromptJob: next.activePromptJob ?? previous.activePromptJob,
+    staleQwenDetected: next.staleQwenDetected ?? previous.staleQwenDetected,
+    staleQwenInstanceId: next.staleQwenInstanceId ?? previous.staleQwenInstanceId,
+    staleQwenUnloadAttempted: next.staleQwenUnloadAttempted ?? previous.staleQwenUnloadAttempted,
+    staleQwenUnloadSucceeded: next.staleQwenUnloadSucceeded ?? previous.staleQwenUnloadSucceeded,
+    staleQwenUnloadError: next.staleQwenUnloadError ?? previous.staleQwenUnloadError,
+    comfyFreeAttempted: next.comfyFreeAttempted ?? previous.comfyFreeAttempted,
+    comfyFreeSucceeded: next.comfyFreeSucceeded ?? previous.comfyFreeSucceeded,
+    observedFreeVram: next.observedFreeVram ?? previous.observedFreeVram,
+    qwenRecoveryError: next.qwenRecoveryError ?? previous.qwenRecoveryError,
+    h3LifecycleDiagnostics: next.h3LifecycleDiagnostics ?? previous.h3LifecycleDiagnostics,
     stageTimings: next.stageTimings && Object.keys(next.stageTimings).length > 0 ? { ...previous.stageTimings, ...next.stageTimings } : previous.stageTimings
   };
+  // null normally means "no new telemetry", but REMOTE_STATE_LOST is an
+  // explicit ownership boundary. Do not resurrect the vanished prompt or
+  // present its last sample as an active execution after that boundary.
+  return isRemoteStateLost(next) ? {
+    ...merged,
+    remotePromptId: null,
+    currentNode: null,
+    queuePosition: null,
+    queueRemaining: null,
+    h3VramReleaseRequested: false,
+    h3VramReleaseSucceeded: null,
+    h3VramReleaseDurationMs: null,
+    h3VramReleaseError: null,
+    connectionError: null
+  } : merged;
 }
 
 export function reconcileRemoteJobState(previous: ComputeJobState, remote: ComputeJobState): ComputeJobState {
@@ -241,8 +405,17 @@ export function readExactSystemPrompt(filePath: string): { text: string; hash: s
   return { text, hash: createHash('sha256').update(bytes).digest('hex') };
 }
 
+class QwenRecoveryError extends Error {
+  constructor(message: string, readonly audit: QwenRecoveryAudit) {
+    super(message);
+    this.name = 'QwenRecoveryError';
+  }
+}
+
 export class ComputeService {
   autoArchive: ((request: RemoteH3GenerationRequest, state: ComputeJobState) => Promise<void>) | null = null;
+  /** Auto Run supplies persisted archive/output evidence without making the scheduler own remote probing. */
+  autoOutputEvidence: ((localJobId: string) => AutoH3OutputEvidence | null) | null = null;
 
   autoProvider(): RemoteComfyComputeProvider { return this.providerForUrl(this.getSettings().remoteComfyUrl); }
 
@@ -251,7 +424,8 @@ export class ComputeService {
     if (!record) return null;
     if (!record.remotePromptId) {
       if (isTerminal(record.state.status)) return record.state;
-      if (!record.state.submissionJson) return null;
+      if (!record.state.submissionJson && canProveNeverSubmitted(record, record.state)) return this.repairUnsubmittedJob(record);
+      if (!record.state.submissionJson) throw new AmbiguousSubmissionError();
       const provider = this.providerForJob(record);
       const remotePromptId = await provider.reconcileAutoJob(record.request.autoJobId ?? localJobId);
       if (!remotePromptId) throw new AmbiguousSubmissionError();
@@ -262,8 +436,27 @@ export class ComputeService {
     }
     const latest = this.findRecord(localJobId)!;
     const provider = this.providerForJob(latest);
-    if (!isTerminal(latest.state.status)) this.startWatcher(latest, provider);
-    if (isTerminal(latest.state.status) && latest.state.h3VramReleaseSucceeded !== true) {
+    if (!isTerminal(latest.state.status)) {
+      const inspection = await provider.inspectH3Lifecycle(latest.remotePromptId, latest.request.autoJobId ?? localJobId);
+      const inspected = this.reconcileInspection(latest, latest.state, inspection);
+      const exactOutputEvidence = this.findExactOutputEvidence(latest, inspected);
+      const classification = classifyPreviousH3Lifecycle(inspected, inspection, exactOutputEvidence, Boolean(latest.request.autoJobId));
+      if (classification === 'RUNNING_REMOTE' || classification === 'PENDING_REMOTE') {
+        this.saveState(latest.request, inspected, latest.createdAt);
+        this.startWatcher(latest, provider);
+        return inspected;
+      }
+      if (classification === 'ORPHANED_REMOTE_PROMPT' || isOrphanedInspection(inspection) && exactOutputEvidence) {
+        const orphaned = await this.reconcileOrphanedRemotePrompt(latest, inspected, inspection);
+        if (isTerminal(orphaned.status)) return this.handleJobState(this.entryForRecord({ ...latest, remotePromptId: orphaned.remotePromptId }, provider), orphaned);
+        return orphaned;
+      }
+      if (isTerminal(inspected.status)) return this.handleJobState(this.entryForRecord({ ...latest, remotePromptId: inspected.remotePromptId }, provider), inspected);
+      this.saveState(latest.request, inspected, latest.createdAt);
+      this.startWatcher(latest, provider);
+      return inspected;
+    }
+    if (requiresH3VramRelease(latest.state) && latest.state.h3VramReleaseSucceeded !== true) {
       return this.ensureH3VramReleased(latest, provider, latest.state, true);
     }
     return this.getJobState(localJobId);
@@ -331,14 +524,24 @@ export class ComputeService {
       if (this.restoringJobs) await this.restoringJobs;
       const settings = this.getSettings();
       const provider = this.providerForCurrentSettings(request.generationBrief ? 'remote' : undefined);
-      if (provider.mode === 'remote') await this.prepareGpuForSubmission(provider, settings.remoteComfyUrl);
-      return await this.submitSerializedH3(request, provider, settings, sessionId);
+      let qwenRecovery: QwenRecoveryAudit | null = null;
+      if (provider.mode === 'remote') {
+        try {
+          qwenRecovery = await this.prepareGpuForSubmission(provider, settings.remoteComfyUrl, Boolean(request.generationBrief));
+        } catch (reason) {
+          if (reason instanceof QwenRecoveryError && request.generationBrief && request.localJobId) {
+            this.persistPreflightFailure(request, settings, reason.audit, reason);
+          }
+          throw reason;
+        }
+      }
+      return await this.submitSerializedH3(request, provider, settings, sessionId, qwenRecovery);
     } finally {
       this.submissionInFlight = false;
     }
   }
 
-  private async prepareGpuForSubmission(provider: ComputeProvider, url: string): Promise<void> {
+  private async prepareGpuForSubmission(provider: ComputeProvider, url: string, autonomous: boolean): Promise<QwenRecoveryAudit | null> {
     await Promise.all(this.finalizingJobs.values());
     await Promise.all(this.releasingJobs.values());
     const serverUrl = normalizeComfyUrl(url);
@@ -347,26 +550,407 @@ export class ComputeService {
       .sort((a, b) => Date.parse(b.createdAt) - Date.parse(a.createdAt));
     for (const record of records) {
       const latest = this.lastStates.get(record.localJobId) ?? record.state;
-      if (record.request.autoJobId && !record.remotePromptId && !latest.submissionJson) continue;
-      if (!isTerminal(latest.status)) {
-        const reconciled = await this.getJobState(record.localJobId);
-        if (!isTerminal(reconciled.status)) throw new Error('The previous H3 job is not finished. Wait for execution and VRAM release before starting Qwen.');
+      const storedInspection = {
+        queueState: latest.h3LifecycleDiagnostics?.remoteQueueState ?? 'not_checked',
+        historyState: latest.h3LifecycleDiagnostics?.historyState ?? 'not_checked'
+      } satisfies Pick<H3RemoteLifecycleInspection, 'queueState' | 'historyState'>;
+      const storedClassification = classifyPreviousH3Lifecycle(latest, storedInspection, this.findExactOutputEvidence(record, latest), Boolean(record.request.autoJobId));
+      if (isTerminal(latest.status)
+        && (storedClassification === 'COMPLETE' || storedClassification === 'COMPLETED_NEEDS_VRAM_RELEASE')
+        && !(isPromptValidationFailure(latest) && isCanonicalComfyPromptId(record.remotePromptId))) continue;
+
+      if (!isCanonicalComfyPromptId(record.remotePromptId)) {
+        if (!latest.submissionJson && canProveNeverSubmitted(record, latest)) {
+          // No authoritative prompt and no POST body means this job never
+          // reached ComfyUI. Repair the stale local latch instead of allowing
+          // Auto Run to submit the same job again on its next tick.
+          this.repairUnsubmittedJob(record);
+          continue;
+        }
+        try {
+          const recovered = await this.recoverAutoJob(record.localJobId);
+          if (recovered && isTerminal(recovered.status) && (!requiresH3VramRelease(recovered) || recovered.h3VramReleaseSucceeded === true && recovered.h3VramReleaseDurationMs != null)) continue;
+          const blocked = recovered ?? latest;
+          const diagnostics = lifecycleDiagnostics(blocked, record.localJobId, record.request, {
+            previousPromptId: blocked.remotePromptId,
+            reasonForBlocking: 'The job has a persisted submission body but no authoritative ComfyUI prompt ID; duplicate submission is unsafe.'
+          });
+          this.persistReconciliation(record, blocked, diagnostics);
+          throw new Error(formatH3GuardMessage(diagnostics));
+        } catch (reason) {
+          if (reason instanceof Error && reason.message.startsWith(previousH3GuardMessage)) throw reason;
+          let submissionInspection: H3RemoteLifecycleInspection | null = null;
+          try { submissionInspection = await provider.inspectH3Lifecycle(null); } catch { /* retain fail-closed unavailable evidence */ }
+          const diagnostics = lifecycleDiagnostics(latest, record.localJobId, record.request, {
+            remoteQueueState: submissionInspection?.queueState ?? 'unavailable',
+            historyState: 'not_checked',
+            reasonForBlocking: `The persisted submission could not be reconciled safely: ${errorMessage(reason)}`
+          });
+          this.persistReconciliation(record, latest, diagnostics);
+          throw new Error(formatH3GuardMessage(diagnostics), { cause: reason });
+        }
+      }
+
+      let inspection: H3RemoteLifecycleInspection;
+      try {
+        inspection = await provider.inspectH3Lifecycle(record.remotePromptId, record.request.autoJobId ?? null);
+      } catch (reason) {
+        const diagnostics = lifecycleDiagnostics(latest, record.localJobId, record.request, {
+          previousPromptId: record.remotePromptId,
+          remoteQueueState: 'unavailable',
+          historyState: 'unavailable',
+          reasonForBlocking: `Remote lifecycle reconciliation failed: ${errorMessage(reason)}`
+        });
+        this.persistReconciliation(record, latest, diagnostics);
+        throw new Error(formatH3GuardMessage(diagnostics), { cause: reason });
+      }
+      let reconciled = this.reconcileInspection(record, latest, inspection);
+      let classification = classifyPreviousH3Lifecycle(reconciled, inspection, this.findExactOutputEvidence(record, reconciled), Boolean(record.request.autoJobId));
+      if ((classification === 'ORPHANED_REMOTE_PROMPT' || isOrphanedInspection(inspection) && this.findExactOutputEvidence(record, reconciled)) && record.request.autoJobId) {
+        reconciled = await this.reconcileOrphanedRemotePrompt(record, reconciled, inspection);
+        classification = classifyPreviousH3Lifecycle(reconciled, inspection, this.findExactOutputEvidence(record, reconciled), true);
+      }
+      if (classification === 'RUNNING_REMOTE' || classification === 'PENDING_REMOTE') {
+        const diagnostics = reconciled.h3LifecycleDiagnostics ?? lifecycleDiagnostics(reconciled, record.localJobId, record.request);
+        this.persistReconciliation(record, reconciled, diagnostics);
+        throw new Error(formatH3GuardMessage(diagnostics));
+      }
+      if (!isTerminal(reconciled.status)) {
+        const diagnostics = reconciled.h3LifecycleDiagnostics ?? lifecycleDiagnostics(reconciled, record.localJobId, record.request);
+        this.persistReconciliation(record, reconciled, diagnostics);
+        throw new Error(formatH3GuardMessage(diagnostics));
+      }
+      const finalized = await this.handleJobState(this.entryForRecord({ ...record, remotePromptId: reconciled.remotePromptId }, provider), reconciled);
+      if (requiresH3VramRelease(finalized) && (finalized.h3VramReleaseSucceeded !== true || finalized.h3VramReleaseDurationMs == null)) {
+        const diagnostics = lifecycleDiagnostics(finalized, record.localJobId, record.request, {
+          remoteQueueState: inspection.queueState,
+          historyState: inspection.historyState,
+          outputCaptured: inspection.outputCaptured || finalized.outputs.length > 0,
+          reasonForBlocking: finalized.h3VramReleaseError ?? 'H3 execution finished, but VRAM release is not verified.'
+        });
+        this.persistReconciliation(record, finalized, diagnostics);
+        throw new Error(formatH3GuardMessage(diagnostics));
       }
     }
-    // Check the server even after restart or if its work came from another client.
-    await provider.assertQueueIdle();
-    const previous = records.find((record) => isCanonicalComfyPromptId(record.remotePromptId));
+    let qwenRecovery: QwenRecoveryAudit | null = null;
+    const previous = records.find((record) => {
+      const state = this.lastStates.get(record.localJobId) ?? record.state;
+      const diagnostics = state.h3LifecycleDiagnostics;
+      return classifyPreviousH3Lifecycle(state, {
+        queueState: diagnostics?.remoteQueueState ?? 'not_checked',
+        historyState: diagnostics?.historyState ?? 'not_checked'
+      }, this.findExactOutputEvidence(record, state), Boolean(record.request.autoJobId)) === 'COMPLETED_NEEDS_VRAM_RELEASE';
+    });
     if (previous) {
       const state = this.lastStates.get(previous.localJobId) ?? previous.state;
+      let inspection: H3RemoteLifecycleInspection | null = null;
+      try { inspection = await provider.inspectH3Lifecycle(previous.remotePromptId); }
+      catch { /* releaseH3Vram performs its own authoritative checks below */ }
       const released = await this.ensureH3VramReleased(previous, provider, state, true);
-      if (released.h3VramReleaseSucceeded === false || released.h3VramReleaseDurationMs == null) {
-        throw new Error(released.h3VramReleaseError ?? 'The previous H3 VRAM release has not completed. Qwen was not submitted.');
+      if (released.h3VramReleaseSucceeded !== true || released.h3VramReleaseDurationMs == null) {
+        const diagnostics = lifecycleDiagnostics(released, previous.localJobId, previous.request, {
+          previousPromptId: previous.remotePromptId,
+          remoteQueueState: inspection?.queueState ?? 'unavailable',
+          historyState: inspection?.historyState ?? 'unavailable',
+          outputCaptured: inspection?.outputCaptured || released.outputs.length > 0,
+          reasonForBlocking: released.h3VramReleaseError ?? 'The previous H3 VRAM release has not completed.'
+        });
+        this.persistReconciliation(previous, released, diagnostics);
+        throw new Error(formatH3GuardMessage(diagnostics));
       }
     }
-    await provider.assertQueueIdle();
+    if (autonomous) {
+      qwenRecovery = await provider.recoverStaleQwen();
+      const staleQwenNotReleased = qwenRecovery.staleQwenDetected === true && qwenRecovery.staleQwenUnloadSucceeded !== true;
+      if (qwenRecovery.activePromptJob || qwenRecovery.qwenRecoveryError || staleQwenNotReleased || qwenRecovery.comfyFreeSucceeded === false) {
+        const detail = qwenRecovery.qwenRecoveryError
+          ?? qwenRecovery.staleQwenUnloadError
+          ?? 'The execution PC could not verify stale Qwen cleanup before the next prompt job.';
+        throw new QwenRecoveryError(`Qwen preflight recovery blocked submission: ${detail}`, qwenRecovery);
+      }
+      await provider.assertQueueIdle();
+    } else {
+      // Check the server even after restart or if its work came from another
+      // client. Autonomous jobs perform the queue-safe Qwen recovery above.
+      await provider.assertQueueIdle();
+    }
+    return qwenRecovery;
   }
 
-  private async submitSerializedH3(request: RemoteH3GenerationRequest, provider: ComputeProvider, settings: AppSettings, sessionId?: number): Promise<ComputeJobState> {
+  private findExactOutputEvidence(record: RemoteH3JobRecord, state: ComputeJobState): (AutoH3OutputEvidence & { source: 'persisted_output' | 'china_archive' }) | null {
+    const diagnostics = state.h3LifecycleDiagnostics;
+    const expectedJobId = record.request.autoJobId ?? record.localJobId;
+    const jobMatches = !diagnostics?.previousJobId || diagnostics.previousJobId === record.localJobId || diagnostics.previousJobId === expectedJobId;
+    const promptMatches = !diagnostics?.previousPromptId || !record.remotePromptId || diagnostics.previousPromptId === record.remotePromptId;
+    if (!jobMatches || !promptMatches) return null;
+    // Every candidate below is stored under this exact RemoteH3JobRecord, or
+    // returned by Auto Run's lookup keyed by this exact autoJobId.
+    const callbackEvidence = this.autoOutputEvidence?.(record.request.autoJobId ?? record.localJobId) ?? null;
+    const candidates = [...state.outputs, ...record.outputMetadata, ...(callbackEvidence?.outputs ?? [])];
+    const unique = new Map<string, ComfyOutputFile>();
+    for (const output of candidates) {
+      const key = `${output.nodeId}:${output.kind}:${output.filename}:${output.subfolder}:${output.type}`;
+      unique.set(key, output);
+    }
+    const outputs = findComfyVideoOutputs([...unique.values()]);
+    const verifiedChinaArchive = Boolean(callbackEvidence?.chinaArchived && callbackEvidence.chinaArchivePath);
+    if (!outputs.length && !verifiedChinaArchive) return null;
+    return {
+      outputs,
+      chinaArchived: Boolean(verifiedChinaArchive || state.h3LifecycleDiagnostics?.chinaArchived),
+      chinaArchivePath: callbackEvidence?.chinaArchivePath ?? null,
+      laptopDownloaded: Boolean(callbackEvidence?.laptopDownloaded),
+      source: verifiedChinaArchive ? 'china_archive' : 'persisted_output'
+    };
+  }
+
+  private recoveredOrphanState(record: RemoteH3JobRecord, previous: ComputeJobState, inspection: H3RemoteLifecycleInspection, evidence: AutoH3OutputEvidence & { source: 'persisted_output' | 'china_archive' }): ComputeJobState {
+    const recoveredPromptId = inspection.recoveredPromptId ?? record.remotePromptId;
+    const recovered = {
+      ...previous,
+      status: 'completed' as const,
+      remotePromptId: recoveredPromptId,
+      progress: 1,
+      outputs: evidence.outputs.length > 0 ? evidence.outputs : previous.outputs,
+      error: null,
+      connectionError: null,
+      pipelineStage: 'COMPLETE' as const,
+      failureStage: undefined,
+      h3LifecycleDiagnostics: lifecycleDiagnostics(previous, record.localJobId, record.request, {
+        // Keep the original UUID in diagnostics even if recent history recovers
+        // a replacement prompt ID, or the remote record has vanished entirely.
+        previousPromptId: previous.h3LifecycleDiagnostics?.previousPromptId ?? record.remotePromptId,
+        h3WasSubmitted: true,
+        remoteQueueState: inspection.queueState,
+        historyState: inspection.historyState,
+        queueSampleTimestamp: inspection.queueSampleTimestamp ?? null,
+        queueRequestUrl: inspection.queueRequestUrl ?? null,
+        queueFreshness: inspection.queueFreshness ?? null,
+        historySampleTimestamp: inspection.historySampleTimestamp ?? null,
+        historyRequestUrl: inspection.historyRequestUrl ?? null,
+        historyFreshness: inspection.historyFreshness ?? null,
+        outputCaptured: evidence.outputs.length > 0 || Boolean(previous.h3LifecycleDiagnostics?.outputCaptured),
+        chinaArchived: evidence.chinaArchived,
+        vramReleaseRequested: previous.h3VramReleaseRequested ?? false,
+        vramReleaseSucceeded: previous.h3VramReleaseSucceeded ?? null,
+        remoteLifecycleState: 'RECOVERED_COMPLETED',
+        orphanRecoverySource: evidence.source,
+        reasonForBlocking: null
+      }),
+      updatedAt: new Date().toISOString()
+    } satisfies ComputeJobState;
+    return recovered;
+  }
+
+  private async reconcileOrphanedRemotePrompt(record: RemoteH3JobRecord, previous: ComputeJobState, inspection: H3RemoteLifecycleInspection): Promise<ComputeJobState> {
+    const evidence = this.findExactOutputEvidence(record, previous);
+    if (evidence) {
+      const recovered = this.recoveredOrphanState(record, previous, inspection, evidence);
+      this.persistReconciliation(record, recovered, recovered.h3LifecycleDiagnostics!);
+      // Exact record-scoped output proves rendering completed even when
+      // ComfyUI history was pruned. Finish archive/VRAM cleanup; never rerender.
+      if (record.request.autoJobId && recovered.outputs.length > 0 && !evidence.chinaArchived) {
+        await this.autoArchive?.(record.request, recovered);
+      }
+      return recovered;
+    }
+
+    const prior = previous.h3LifecycleDiagnostics;
+    const nowMs = Date.now();
+    const nowIso = new Date(nowMs).toISOString();
+    const attempts = prior?.orphanReconciliationAttempts ?? 0;
+    const firstObservedAt = prior?.orphanFirstObservedAt ?? nowIso;
+    const lastCheckedAt = prior?.orphanLastCheckedAt ? Date.parse(prior.orphanLastCheckedAt) : NaN;
+    const checkIsDue = !Number.isFinite(lastCheckedAt) || nowMs - lastCheckedAt >= orphanReconciliationIntervalMs;
+    if (!checkIsDue) {
+      const waiting = {
+        ...previous,
+        h3VramReleaseRequested: false,
+        h3VramReleaseSucceeded: null,
+        h3VramReleaseDurationMs: null,
+        h3VramReleaseError: null,
+        h3LifecycleDiagnostics: lifecycleDiagnostics(previous, record.localJobId, record.request, {
+          previousPromptId: prior?.previousPromptId ?? record.remotePromptId,
+          h3WasSubmitted: true,
+          remoteQueueState: 'empty',
+          historyState: 'missing',
+          remoteLifecycleState: 'ORPHANED_REMOTE_PROMPT',
+          orphanReconciliationAttempts: attempts,
+          orphanFirstObservedAt: firstObservedAt,
+          orphanLastCheckedAt: prior?.orphanLastCheckedAt ?? nowIso,
+          reasonForBlocking: `RECONCILING LOST REMOTE JOB: waiting for bounded check ${attempts}/${orphanReconciliationMaxChecks}.`
+        }),
+        updatedAt: nowIso
+      } satisfies ComputeJobState;
+      this.persistReconciliation(record, waiting, waiting.h3LifecycleDiagnostics!);
+      throw new Error(formatH3GuardMessage(waiting.h3LifecycleDiagnostics!));
+    }
+
+    const nextAttempt = attempts + 1;
+    if (nextAttempt < orphanReconciliationMaxChecks) {
+      const waiting = {
+        ...previous,
+        h3VramReleaseRequested: false,
+        h3VramReleaseSucceeded: null,
+        h3VramReleaseDurationMs: null,
+        h3VramReleaseError: null,
+        h3LifecycleDiagnostics: lifecycleDiagnostics(previous, record.localJobId, record.request, {
+          previousPromptId: prior?.previousPromptId ?? record.remotePromptId,
+          h3WasSubmitted: true,
+          remoteQueueState: 'empty',
+          historyState: 'missing',
+          remoteLifecycleState: 'ORPHANED_REMOTE_PROMPT',
+          orphanReconciliationAttempts: nextAttempt,
+          orphanFirstObservedAt: firstObservedAt,
+          orphanLastCheckedAt: nowIso,
+          reasonForBlocking: `RECONCILING LOST REMOTE JOB: check ${nextAttempt}/${orphanReconciliationMaxChecks} found no queue, history, or exact output. Next check in 5 seconds.`
+        }),
+        updatedAt: nowIso
+      } satisfies ComputeJobState;
+      this.persistReconciliation(record, waiting, waiting.h3LifecycleDiagnostics!);
+      throw new Error(formatH3GuardMessage(waiting.h3LifecycleDiagnostics!));
+    }
+
+    const lost = {
+      ...previous,
+      status: 'failed' as const,
+      remotePromptId: null,
+      pipelineStage: 'REMOTE_STATE_LOST' as const,
+      failureStage: 'REMOTE_STATE_LOST' as const,
+      error: 'Remote execution record was lost. Marked failed and continuing without resubmitting the old prompt.',
+      connectionError: null,
+      h3VramReleaseRequested: false,
+      h3VramReleaseSucceeded: null,
+      h3VramReleaseDurationMs: null,
+      h3VramReleaseError: null,
+      h3LifecycleDiagnostics: lifecycleDiagnostics(previous, record.localJobId, record.request, {
+        previousPromptId: prior?.previousPromptId ?? record.remotePromptId,
+        h3WasSubmitted: true,
+        remoteQueueState: 'empty',
+        historyState: 'missing',
+        outputCaptured: false,
+        remoteLifecycleState: 'REMOTE_STATE_LOST',
+        orphanReconciliationAttempts: nextAttempt,
+        orphanFirstObservedAt: firstObservedAt,
+        orphanLastCheckedAt: nowIso,
+        orphanRecoverySource: null,
+        reasonForBlocking: null
+      }),
+      updatedAt: nowIso
+    } satisfies ComputeJobState;
+    this.persistReconciliation(record, lost, lost.h3LifecycleDiagnostics!);
+    return lost;
+  }
+
+  private reconcileInspection(record: RemoteH3JobRecord, previous: ComputeJobState, inspection: H3RemoteLifecycleInspection): ComputeJobState {
+    const remote = inspection.remoteState;
+    const reconciledPromptId = inspection.recoveredPromptId ?? record.remotePromptId;
+    const merged = remote
+      ? this.applyStageTiming(reconcileRemoteJobState(previous, { ...remote, localJobId: record.localJobId, remotePromptId: reconciledPromptId }))
+      : previous;
+    const reason = inspection.queueState === 'queue_running'
+      ? 'ComfyUI reports the previous H3 prompt is queue_running.'
+      : inspection.queueState === 'queue_pending'
+        ? 'ComfyUI reports the previous H3 prompt is queue_pending.'
+        : inspection.historyState === 'running'
+          ? 'ComfyUI history reports the previous H3 execution is still running.'
+          : inspection.historyState === 'queued'
+            ? 'ComfyUI history reports the previous H3 execution is still incomplete.'
+            : inspection.historyState === 'missing'
+              ? inspection.queueState === 'busy_other'
+                ? 'The previous prompt is absent, but another remote queue item is active.'
+                : 'The previous prompt is absent from both queue and history; completion cannot be proven.'
+              : inspection.queueState === 'busy_other'
+                ? 'Another remote ComfyUI queue item is active.'
+                : null;
+    const active = inspection.queueState === 'queue_running'
+      || inspection.queueState === 'queue_pending'
+      || inspection.historyState === 'running'
+      || inspection.historyState === 'queued'
+      || inspection.queueState === 'busy_other';
+    const remoteLifecycleState: H3RemoteLifecycleState | null = active
+      ? 'ACTIVE'
+      : inspection.recoveredPromptId && inspection.historyState === 'completed'
+        ? 'RECOVERED_COMPLETED'
+        : inspection.historyState === 'completed' || inspection.historyState === 'failed'
+          ? 'COMPLETED'
+          : isOrphanedInspection(inspection)
+            ? 'ORPHANED_REMOTE_PROMPT'
+            : merged.h3LifecycleDiagnostics?.remoteLifecycleState ?? null;
+    return {
+      ...merged,
+      h3LifecycleDiagnostics: lifecycleDiagnostics(merged, record.localJobId, record.request, {
+        previousPromptId: merged.h3LifecycleDiagnostics?.previousPromptId ?? record.remotePromptId,
+        h3WasSubmitted: isPromptValidationFailure(merged) ? false : h3SamplingWasSubmitted(merged),
+        remoteQueueState: inspection.queueState,
+        historyState: inspection.historyState,
+        outputCaptured: inspection.outputCaptured || merged.outputs.length > 0,
+        remoteLifecycleState,
+        orphanRecoverySource: inspection.recoverySource ?? merged.h3LifecycleDiagnostics?.orphanRecoverySource ?? null,
+        reasonForBlocking: reason
+      })
+    };
+  }
+
+  private repairUnsubmittedJob(record: RemoteH3JobRecord): ComputeJobState {
+    const previous = this.lastStates.get(record.localJobId) ?? record.state;
+    if (isTerminal(previous.status)) return previous;
+    const validationFailure = isPromptValidationFailure(previous);
+    const failureStage = validationFailure ? 'PROMPT_VALIDATION_FAILED' as const : previous.failureStage ?? 'H3_QUEUE_FAILED' as const;
+    const repaired: ComputeJobState = {
+      ...previous,
+      status: 'failed',
+      remotePromptId: null,
+      pipelineStage: failureStage,
+      failureStage,
+      error: previous.error ?? 'Reconciled stale H3 state: no ComfyUI prompt was ever submitted.',
+      h3VramReleaseRequested: false,
+      h3VramReleaseSucceeded: null,
+      h3VramReleaseDurationMs: null,
+      h3VramReleaseError: null,
+      h3LifecycleDiagnostics: lifecycleDiagnostics(previous, record.localJobId, record.request, {
+        previousPromptId: null,
+        h3WasSubmitted: false,
+        remoteQueueState: 'empty',
+        historyState: 'not_checked',
+        reasonForBlocking: null
+      }),
+      updatedAt: new Date().toISOString()
+    };
+    this.persistReconciliation(record, repaired, repaired.h3LifecycleDiagnostics!);
+    return repaired;
+  }
+
+  private persistReconciliation(record: RemoteH3JobRecord, state: ComputeJobState, diagnostics: H3LifecycleDiagnostics): void {
+    const next = { ...state, h3LifecycleDiagnostics: diagnostics, updatedAt: new Date().toISOString() };
+    this.saveState(record.request, next, record.createdAt);
+    this.emitState(next);
+  }
+
+  private persistPreflightFailure(request: RemoteH3GenerationRequest, settings: AppSettings, audit: QwenRecoveryAudit, reason: unknown): void {
+    const localJobId = request.localJobId?.trim();
+    if (!localJobId) return;
+    const promptEngine = request.generationBrief
+      ? normalizeAutonomousH3PromptEngineSettings(settings.h3PromptEngine)
+      : request.promptEngine ?? null;
+    const state = {
+      ...emptyState(localJobId, 'failed', settings.remoteComfyUrl),
+      generationBrief: request.generationBrief ?? null,
+      promptEngine,
+      ...h3PromptEngineAudit(promptEngine),
+      ...(promptEngine ? { llmUnloadRequested: promptEngine.unloadModelBeforeH3 } : {}),
+      ...audit,
+      pipelineStage: 'LLM_UNAVAILABLE' as const,
+      failureStage: 'LLM_UNAVAILABLE' as const,
+      error: errorMessage(reason),
+      updatedAt: new Date().toISOString()
+    };
+    const createdAt = new Date().toISOString();
+    this.saveState(request, state, createdAt);
+    this.emitState(state);
+  }
+
+  private async submitSerializedH3(request: RemoteH3GenerationRequest, provider: ComputeProvider, settings: AppSettings, sessionId?: number, qwenRecovery: QwenRecoveryAudit | null = null): Promise<ComputeJobState> {
     const localJobId = request.localJobId?.trim() || request.clientJobId?.trim() || `${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}-${Math.random().toString(36).slice(2)}`;
     let requestForTracking: RemoteH3GenerationRequest = { ...request };
     let promptEngineForTracking = request.generationBrief
@@ -404,6 +988,7 @@ export class ComputeService {
     const trackedRequest: RemoteH3GenerationRequest = { ...withWorkflowSettingsSnapshot(requestForTracking), localJobId, clientJobId: undefined };
     const createdAt = new Date().toISOString();
     let latest = emptyState(localJobId, 'preparing', settings.remoteComfyUrl);
+    if (qwenRecovery) latest = { ...latest, ...qwenRecovery };
     if (request.generationBrief) {
       latest = {
         ...latest,
@@ -600,6 +1185,10 @@ export class ComputeService {
       if (record.request.autoJobId) continue; // Auto session recovery owns reconciliation and archive ordering.
       if (isRemoteTracked(state.status)) {
         if (!isCanonicalComfyPromptId(record.remotePromptId)) {
+          if (!state.submissionJson && canProveNeverSubmitted(record, state)) {
+            this.repairUnsubmittedJob(record);
+            continue;
+          }
           state = {
             ...state,
             status: 'error',
@@ -644,7 +1233,7 @@ export class ComputeService {
     const pending = this.releasingJobs.get(record.localJobId);
     if (pending) return pending;
     if (provider.mode !== 'remote') return state;
-    if (state.h3VramReleaseDurationMs != null && !(retryFailure && (state.h3VramReleaseSucceeded === false || record.request.autoJobId && state.h3VramReleaseSucceeded !== true))) return state;
+    if (state.h3VramReleaseDurationMs != null && !(retryFailure && state.h3VramReleaseSucceeded !== true)) return state;
     const release = async () => {
       const publish = (next: ComputeJobState) => {
         state = this.applyStageTiming({ ...next, updatedAt: new Date().toISOString() });
@@ -654,11 +1243,54 @@ export class ComputeService {
       const previousStage = state.pipelineStage;
       // Persist SaveVideo descriptors before ComfyUI clears its executor caches.
       publish({ ...state, pipelineStage: 'RELEASING_H3_VRAM', h3VramReleaseRequested: false, h3VramReleaseSucceeded: null, h3VramReleaseDurationMs: null, h3VramReleaseError: null });
-      if (record.request.autoJobId && state.status === 'completed') await this.autoArchive?.(record.request, state);
-      const result = await provider.releaseH3Vram(record.remotePromptId ?? '', () => publish({ ...state, h3VramReleaseRequested: true }));
-      publish({ ...state, ...result, pipelineStage: state.status === 'completed'
-        ? this.getSettings().remoteAutoDownload && !state.localResultPath ? 'RELEASING_H3_VRAM' : 'COMPLETE'
-        : previousStage });
+      let persistedRecord = this.findRecord(record.localJobId);
+      let exactEvidence = persistedRecord ? this.findExactOutputEvidence(persistedRecord, state) : null;
+      if (record.request.autoJobId && state.status === 'completed' && !exactEvidence?.chinaArchived) {
+        await this.autoArchive?.(record.request, state);
+      }
+      // Release authorization is a single fresh-read transaction. Never reuse
+      // queue/history values persisted by an earlier reconciliation pass.
+      const releaseInspection = await provider.inspectH3Lifecycle(record.remotePromptId, record.request.autoJobId ?? record.localJobId);
+      persistedRecord = this.findRecord(record.localJobId);
+      exactEvidence = persistedRecord ? this.findExactOutputEvidence(persistedRecord, state) : null;
+      const releaseClassification = classifyPreviousH3Lifecycle(state, releaseInspection, exactEvidence, Boolean(record.request.autoJobId));
+      const classifierTimestamp = new Date().toISOString();
+      const completionEvidence = exactEvidence?.chinaArchived ? 'china_archive' as const
+        : exactEvidence?.outputs.length ? 'output' as const
+          : 'history' as const;
+      const authorized = releaseClassification === 'COMPLETED_NEEDS_VRAM_RELEASE';
+      publish({ ...state, h3LifecycleDiagnostics: lifecycleDiagnostics(state, record.localJobId, record.request, {
+        remoteQueueState: releaseInspection.queueState,
+        historyState: releaseInspection.historyState,
+        queueSampleTimestamp: releaseInspection.queueSampleTimestamp ?? null,
+        queueRequestUrl: releaseInspection.queueRequestUrl ?? null,
+        queueFreshness: releaseInspection.queueFreshness ?? null,
+        historySampleTimestamp: releaseInspection.historySampleTimestamp ?? null,
+        historyRequestUrl: releaseInspection.historyRequestUrl ?? null,
+        historyFreshness: releaseInspection.historyFreshness ?? null,
+        completionEvidence: completionEvidence === 'china_archive' ? 'CHINA_ARCHIVE' : completionEvidence === 'output' ? 'OUTPUT' : 'HISTORY',
+        classifierResult: releaseClassification,
+        classifierTimestamp,
+        releaseAuthorized: authorized,
+        freeAttempted: false,
+        reasonForBlocking: authorized ? null : `Fresh release classification is ${releaseClassification}.`
+      }) });
+      if (releaseClassification !== 'COMPLETED_NEEDS_VRAM_RELEASE') {
+        throw new Error(`Lifecycle invariant: H3 VRAM release requested from ${releaseClassification}.`);
+      }
+      const result = await provider.releaseH3Vram({
+        previousJobId: record.localJobId,
+        previousPromptId: record.remotePromptId ?? '',
+        completionProven: true,
+        completionEvidence
+      }, (audit) => publish({ ...state, ...audit }));
+      publish({ ...state, ...result, h3LifecycleDiagnostics: state.h3LifecycleDiagnostics
+        ? { ...state.h3LifecycleDiagnostics, freeAttempted: result.h3VramReleaseRequested ?? false }
+        : state.h3LifecycleDiagnostics, pipelineStage: result.h3VramReleaseSucceeded !== true
+        ? 'RELEASING_H3_VRAM'
+        : state.status === 'completed'
+          ? this.getSettings().remoteAutoDownload && !state.localResultPath ? 'RELEASING_H3_VRAM' : 'COMPLETE'
+          : previousStage });
       return state;
     };
     const operation = release();
@@ -683,10 +1315,35 @@ export class ComputeService {
     let state = this.applyStageTiming(mergeState(previous, normalizedIncoming));
     if (isTerminal(state.status)) {
       entry.stop();
-      state = await this.ensureH3VramReleased(entry, entry.provider, state);
+      const terminalState = {
+        ...state,
+        ...(isPromptValidationFailure(state) ? {
+          h3VramReleaseRequested: false,
+          h3VramReleaseSucceeded: null,
+          h3VramReleaseDurationMs: null,
+          h3VramReleaseError: null
+        } : {}),
+      };
+      state = {
+        ...terminalState,
+        h3LifecycleDiagnostics: lifecycleDiagnostics(terminalState, entry.localJobId, entry.request, {
+          h3WasSubmitted: isPromptValidationFailure(state) ? false : state.h3LifecycleDiagnostics?.h3WasSubmitted ?? h3SamplingWasSubmitted(state),
+          reasonForBlocking: null
+        })
+      };
+      // PROMPT_VALIDATION_FAILED is emitted after exact Qwen cleanup and
+      // before the H3 sampler is entered. It must not inherit an H3 VRAM
+      // release latch from the generic remote-prompt path.
+      if (requiresH3VramRelease(state)) {
+        // Do not use a persisted lifecycle classification as a pre-gate. The
+        // release transaction performs its own fresh queue/history read and
+        // atomically classifies the latest durable completion evidence.
+        state = await this.ensureH3VramReleased(entry, entry.provider, state);
+      }
     }
     const settings = this.getSettings();
-    if (state.status === 'completed' && !entry.request.autoJobId && settings.remoteAutoDownload && !state.localResultPath && !entry.downloadStarted) {
+    if (state.status === 'completed' && !entry.request.autoJobId && settings.remoteAutoDownload && !state.localResultPath && !entry.downloadStarted
+      && (!requiresH3VramRelease(state) || state.h3VramReleaseSucceeded === true)) {
       entry.downloadStarted = true;
       const output = findComfyVideoOutputs(state.outputs)[0];
       if (!output) {
@@ -703,14 +1360,23 @@ export class ComputeService {
         }
       }
     }
-    if (state.status === 'completed' && (entry.request.autoJobId || !settings.remoteAutoDownload || state.localResultPath)) {
+    if (state.status === 'completed' && (entry.request.autoJobId || !settings.remoteAutoDownload || state.localResultPath)
+      && (!requiresH3VramRelease(state) || state.h3VramReleaseSucceeded === true)) {
       state = this.applyStageTiming({ ...state, pipelineStage: 'COMPLETE' });
     }
     this.saveState(entry.request, state, entry.createdAt);
     this.emitState(state);
     if (isTerminal(state.status)) {
       entry.stop();
-      for (const [identifier, current] of this.activeJobs.entries()) if (current === entry) this.activeJobs.delete(identifier);
+      // Reconciliation may construct a fresh entry for a job whose watcher is
+      // still registered. Clear ownership by stable local identity as well as
+      // object identity so a lost prompt can never remain in-flight.
+      for (const [identifier, current] of this.activeJobs.entries()) {
+        if (current === entry || current.localJobId === entry.localJobId) {
+          current.stop();
+          this.activeJobs.delete(identifier);
+        }
+      }
     }
     return state;
   }
@@ -728,9 +1394,11 @@ export class ComputeService {
     if (!localJobId) throw new Error('Remote H3 state is missing its local job identifier.');
     const remotePromptId = state.remotePromptId?.trim() || null;
     const promptEngine = state.promptEngine ?? request.promptEngine ?? null;
+    const normalizedState = normalizePromptEngineState({ ...this.applyStageTiming(state), localJobId, remotePromptId }, promptEngine);
     const identifiedState = {
-      ...normalizePromptEngineState({ ...this.applyStageTiming(state), localJobId, remotePromptId }, promptEngine),
-      promptEngine
+      ...normalizedState,
+      promptEngine,
+      h3LifecycleDiagnostics: lifecycleDiagnostics(normalizedState, localJobId, request)
     };
     this.lastStates.set(localJobId, identifiedState);
     const record: RemoteH3JobRecord = {

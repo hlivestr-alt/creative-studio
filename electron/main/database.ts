@@ -835,6 +835,11 @@ export class HistoryDatabase {
     this.persist();
   }
 
+  getSchemaVersion(): number {
+    const rows = this.database.exec('PRAGMA user_version');
+    return Number(rows[0]?.values[0]?.[0] ?? 0);
+  }
+
   listAutoSessions(): AutoH3Session[] {
     return this.query<{ json: string }>("SELECT json FROM auto_h3_sessions ORDER BY rowid DESC").map(row => JSON.parse(row.json) as AutoH3Session);
   }

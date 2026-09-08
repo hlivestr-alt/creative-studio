@@ -73,7 +73,15 @@ to fail.
 LM Studio configuration and the workflow's Qwen/H3 inputs are unchanged.
 The model remains `qwen/qwen3.8-27b`, the prompt timeout remains 600 seconds,
 and node 152 continues to unload and verify the exact emitted Qwen instance
-before H3 executes.
+before the final validity gate and H3 execution. This ordering is intentional:
+an invalid prompt still unloads Qwen before the job is failed.
+
+Before the next autonomous prompt, the execution extension also performs a
+queue-mutex-protected stale-Qwen check. It refuses to guess when multiple
+canonical instances exist and never unloads while a prompt is running or
+queued. When stale Qwen or excessive VRAM is found, it unloads the exact
+instance first and then requests ComfyUI `/free`; the recovery audit is stored
+on the job separately from the original prompt or validation failure.
 
 ## Hardware validation, 2026-09-05
 

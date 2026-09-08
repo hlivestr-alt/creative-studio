@@ -12,6 +12,7 @@ import re
 import socket
 import ssl
 import threading
+import time
 from collections.abc import Callable
 from urllib.parse import urlparse
 
@@ -175,6 +176,66 @@ def _native_model_observation(root: str, api_key: str, timeout: int) -> tuple[st
     # A native chat response identifies the exact instance after JIT/autoload;
     # preflight never guesses when more than one target instance is present.
     return PROMPT_ENGINE_MODEL_ID, instance_ids[0] if len(instance_ids) == 1 else None
+
+
+def inspect_prompt_model(endpoint: str, api_key: str = "", timeout: int = 20) -> dict:
+    """Inspect only the canonical Qwen model and its loaded native instances."""
+    root = _api_root(endpoint)
+    _require_allowed_endpoint(root, False)
+    payload = _request_json(_native_root(root) + "/api/v1/models", None, str(api_key or ""), max(3, min(int(timeout), 60)))
+    target = _native_model_entry(payload)
+    instances = target.get("loaded_instances") if isinstance(target, dict) else []
+    instance_ids = [
+        str(instance.get("id", instance.get("instance_id", ""))).strip()
+        for instance in instances or ()
+        if isinstance(instance, dict) and str(instance.get("id", instance.get("instance_id", ""))).strip()
+    ]
+    return {
+        "model_id": PROMPT_ENGINE_MODEL_ID,
+        "model_available": target is not None,
+        "instance_ids": instance_ids,
+    }
+
+
+def unload_prompt_model_instance(endpoint: str, instance_id: str, api_key: str = "", timeout: int = 20) -> dict:
+    """Unload and verify one exact canonical Qwen instance; never guess another instance."""
+    started_at = time.monotonic()
+    target_instance_id = str(instance_id or "").strip()
+    result = {
+        "unload_requested": bool(target_instance_id),
+        "unload_succeeded": False,
+        "unload_error": None,
+        "instance_id": target_instance_id or None,
+        "unload_duration_ms": 0,
+    }
+    try:
+        if not target_instance_id:
+            raise ValueError("LM Studio exact Qwen unload requires an instance ID.")
+        root = _api_root(endpoint)
+        _require_allowed_endpoint(root, False)
+        observation = inspect_prompt_model(endpoint, api_key, timeout)
+        if not observation["model_available"]:
+            raise ValueError("LM Studio no longer reports qwen/qwen3.8-27b; refusing to unload another model.")
+        if observation["instance_ids"] != [target_instance_id]:
+            raise ValueError("LM Studio did not report exactly the requested canonical Qwen instance.")
+        response = _request_json(
+            _native_root(root) + "/api/v1/models/unload",
+            {"instance_id": target_instance_id},
+            str(api_key or ""),
+            max(3, min(int(timeout), 60)),
+        )
+        response_instance_id = str(response.get("instance_id", target_instance_id)).strip()
+        if response_instance_id != target_instance_id:
+            raise ValueError("LM Studio returned an unexpected unload instance ID.")
+        remaining = inspect_prompt_model(endpoint, api_key, timeout)
+        if target_instance_id in remaining["instance_ids"]:
+            raise ValueError("LM Studio still reports the exact Qwen instance after unload.")
+        result["unload_succeeded"] = True
+    except Exception as exc:
+        result["unload_error"] = str(exc)
+    finally:
+        result["unload_duration_ms"] = max(0, int(round((time.monotonic() - started_at) * 1000)))
+    return result
 
 
 def discover_model(endpoint: str, api_key: str = "", allow_remote_endpoint: bool = False,
@@ -983,50 +1044,71 @@ def enhance_prompt(basic_prompt: str, mode: str, duration_seconds: float,
     if max_tokens is not None and int(max_tokens) > 0:
         prompt_engine_manifest["maxTokens"] = int(max_tokens)
 
-    enhanced, validation, result_manifest = enhance_prompt_with_completion(
-        basic_prompt,
-        mode,
-        duration_seconds,
-        reference_context,
-        complete,
-        repair_attempts,
-        prompt_engine_manifest,
-        enhance_description,
-        ambience_foley_policy,
-        background_score_policy,
-        voice_performance,
-        instrumental_description,
-        aspect_ratio,
-        media_manifest,
-        multishot_shot_count,
-        frame_count,
-        multishot_identity_lock,
-        multishot_voice_lock,
-        multishot_setting_lock,
-        creative_treatment_json,
-        shot_plan_json,
-        cinematography_json,
-        instrumental_style,
-        acoustic_space,
-        dialogue_coverage,
-        delivery_target,
-        dialogue_language,
-        editing_intent,
-        invent_scene,
-        creative_latitude=creative_latitude,
-        lora_trigger_words=lora_trigger_words,
-        system_prompt_override=system_prompt_override,
-    )
-    if len(instance_ids) > 1:
-        raise RuntimeError("LM Studio returned more than one model instance during prompt generation without identifying the instance actually used; H3 was not queued.")
-    instance_id = next(iter(instance_ids), "")
-    if not instance_id:
-        instance_id = _loaded_instance_id(root, selected_model, secret, int(timeout))
-    result_manifest = dict(result_manifest)
-    result_manifest["modelId"] = selected_model
-    result_manifest["modelInstanceId"] = instance_id
-    result_manifest["llmTimeoutSeconds"] = int(timeout)
-    result_manifest["httpConnectTimeoutSeconds"] = min(LLM_CONNECT_TIMEOUT_SECONDS, int(timeout))
-    result_manifest["httpReadTimeoutSeconds"] = int(timeout)
-    result_manifest["httpOverallTimeoutSeconds"] = None
-    return enhanced, validation, result_manifest
+    try:
+        enhanced, validation, result_manifest = enhance_prompt_with_completion(
+            basic_prompt,
+            mode,
+            duration_seconds,
+            reference_context,
+            complete,
+            repair_attempts,
+            prompt_engine_manifest,
+            enhance_description,
+            ambience_foley_policy,
+            background_score_policy,
+            voice_performance,
+            instrumental_description,
+            aspect_ratio,
+            media_manifest,
+            multishot_shot_count,
+            frame_count,
+            multishot_identity_lock,
+            multishot_voice_lock,
+            multishot_setting_lock,
+            creative_treatment_json,
+            shot_plan_json,
+            cinematography_json,
+            instrumental_style,
+            acoustic_space,
+            dialogue_coverage,
+            delivery_target,
+            dialogue_language,
+            editing_intent,
+            invent_scene,
+            creative_latitude=creative_latitude,
+            lora_trigger_words=lora_trigger_words,
+            system_prompt_override=system_prompt_override,
+        )
+        if len(instance_ids) > 1:
+            raise RuntimeError("LM Studio returned more than one model instance during prompt generation without identifying the instance actually used; H3 was not queued.")
+        instance_id = next(iter(instance_ids), "")
+        if not instance_id:
+            instance_id = _loaded_instance_id(root, selected_model, secret, int(timeout))
+        result_manifest = dict(result_manifest)
+        result_manifest["modelId"] = selected_model
+        result_manifest["modelInstanceId"] = instance_id
+        result_manifest["llmTimeoutSeconds"] = int(timeout)
+        result_manifest["httpConnectTimeoutSeconds"] = min(LLM_CONNECT_TIMEOUT_SECONDS, int(timeout))
+        result_manifest["httpReadTimeoutSeconds"] = int(timeout)
+        result_manifest["httpOverallTimeoutSeconds"] = None
+        return enhanced, validation, result_manifest
+    except Exception as exc:
+        cleanup = {
+            "unload_requested": False,
+            "unload_succeeded": False,
+            "unload_error": "No exact loaded Qwen instance was available for cleanup.",
+            "instance_id": None,
+            "unload_duration_ms": 0,
+        }
+        candidate = next(iter(instance_ids), "") if len(instance_ids) == 1 else ""
+        if len(instance_ids) > 1:
+            cleanup["unload_error"] = "Multiple loaded Qwen instances were observed; cleanup refused to guess an instance."
+        elif not candidate:
+            try:
+                candidate = _loaded_instance_id(root, selected_model, secret, min(int(timeout), 20))
+            except Exception as resolve_error:
+                cleanup["unload_error"] = f"Could not resolve the exact loaded Qwen instance for cleanup: {resolve_error}"
+        if candidate:
+            cleanup = unload_prompt_model_instance(root, candidate, secret, 20)
+        marker = " [PROYA_LLM_CLEANUP]" + json.dumps(cleanup, ensure_ascii=False, separators=(",", ":"))
+        raise RuntimeError(f"{exc}{marker}") from exc

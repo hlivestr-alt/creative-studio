@@ -18,6 +18,7 @@ describe('SQLite history repository', () => {
     const path = join(temporaryDirectory, 'history.sqlite');
     const SQL = await loadSqlite();
     const database = new HistoryDatabase(path, SQL);
+    expect(database.getSchemaVersion()).toBe(0);
     const created = database.create({
       product: 'serum', postType: 'Product Hero', topic: 'Brightening hero', visualStyle: 'Citrus Light',
       workflowMode: 'DIRECT_IMAGE', postStructure: 'CAROUSEL', requestedSlideCount: 5, captionMode: 'STANDARD', creativityLevel: 'Balanced', format: 'Instagram Feed 4:5', language: 'Indonesian', preparedBrief: '# ROLE',

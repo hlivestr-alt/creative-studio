@@ -14,14 +14,21 @@
 10. **Recovery:** reopening displays “Previous Auto Run interrupted” with Resume / Stop Session. No GPU generation starts automatically. Resume reconciles the saved current job. Pending downloads resume automatically, including output captured immediately before a crash. Stop Session drains a known in-flight job; it does not pretend an unreachable remote job has stopped.
 11. **Variety:** each attempt receives a new creative seed, CreativeGenome selection, fingerprint calculation, and random H3 seed when Random is selected. Cycle seeds are fresh and persistent. A larger same-product/content history window and candidate search discourage repeats while preserving coherent concepts and existing truth/constraints. Finite compatible creative pools can still require the existing least-repeated fallback.
 12. **Validation:** see the validation record below. All execution tests use simulated providers; no continuous generation or GPU render is started as part of development or packaging.
-13. **Laptop package:** `release/auto-h3-20260907/win-unpacked/PROYA Creative Studio.exe`.
-14. **China package:** `release/auto-h3-20260907/PROYA-China-Auto-H3-20260907.zip`. Deployment instructions are in `AUTO-RUN.md` inside the package. The package is prepared locally; it has not been installed on the China PC by this task.
+13. **Laptop package:** `release/qwen-cleanup-20260907/win-unpacked/PROYA Creative Studio.exe`.
+14. **China package:** `release/qwen-cleanup-20260907/PROYA-China-Auto-H3-20260907.zip`. Deployment instructions are in `AUTO-RUN.md` inside the package. The package is prepared locally; it has not been installed on the China PC by this task.
 
 ## Failure and handoff details
 
 Prompt/planning failures allow two job-level retries; H3 failures allow one. Each retry has its own identity, fresh creative plan and diagnostics. Exhausted combinations advance normally. VRAM release failure is a handoff barrier, so retries or the next product cannot start Qwen until cleanup is verified by the existing engine.
 
-The successful path remains Qwen → rewrite/validate → exact Qwen instance unload → H3 → SaveVideo → persist descriptor → China archive attempt → existing `/free` and release verification → next job. An archive-copy failure retains the original descriptor and retries separately; it does not consume a rerender retry.
+The successful path remains Qwen → rewrite/validate → exact Qwen instance unload → validity decision → H3 → SaveVideo → persist descriptor → China archive attempt → existing `/free` and release verification → next job. An invalid final prompt follows the same exact-instance unload, then fails as `PROMPT_VALIDATION_FAILED` without H3 and advances once; it is not retried as a prompt-generation failure. An archive-copy failure retains the original descriptor and retries separately; it does not consume a rerender retry.
+
+Before each autonomous Qwen job, the execution PC checks for a stale canonical
+Qwen instance under the ComfyUI queue mutex, unloads only one exact instance
+when no prompt is active or queued, and uses ComfyUI `/free` for remaining
+ComfyUI/excess-VRAM pressure. The recovery audit is persisted with the job;
+active work blocks safely and is retried rather than leaving Auto Run silently
+running without progress.
 
 If a POST response is lost and ComfyUI subsequently loses both queue and history (for example, the China server restarts), acceptance can remain unknowable. The session stays pending with a diagnostic instead of risking a duplicate render. Stop After Current also needs connectivity to confirm that an in-flight remote job and its cleanup have completed.
 
@@ -31,13 +38,13 @@ Single Video continues to use its existing Generate action and engine. While an 
 
 - `npm run typecheck`: passed.
 - `npm run lint`: passed with zero warnings.
-- `npm test`: 292 tests passed across 23 files, including the scheduler, transport, existing single-video engine, and GPU handoff regressions.
+- `npm test`: 297 tests passed across 23 files, including the scheduler, transport, existing single-video engine, and GPU handoff regressions. The package check uses `H3_PACKAGE_RESOURCES=release/qwen-cleanup-20260907/win-unpacked/resources`.
 - Scheduler simulations: 3 products × 7 selected types × 2 cycles = 42 executions; all 8 current registry types = 48 executions. Ordering, fresh random seeds, fixed seeds, shuffling, bounded failures, both stop modes, 30-second outage with 5-second retries, ambiguous submission adoption, archive retries, independent downloads, cancellation, concurrency one, SQLite restart recovery, and unverified VRAM barriers covered.
-- China package: `py -m pytest tests -q` from the node package directory: 1,081 passed, 5 existing skips. `py test_auto_archive.py`: 3 passed, 1 skipped because the Windows account cannot create symlinks. The traversal, source escape, empty-file, root override, copy verification, and idempotency tests passed.
+- China package: `py -m pytest -q` from the node package directory: 1,085 passed, 5 existing skips. `py test_auto_archive.py`: 3 passed, 1 skipped because the Windows account cannot create symlinks. The traversal, source escape, empty-file, root override, copy verification, and idempotency tests passed.
 - Production build: Windows unpacked application built successfully. Vite reports a non-fatal bundle-size advisory (583 KB main renderer chunk).
 - Packaged UI smoke: Single Video controls and H3 stage rail present; Auto Run Start present; 15 selections checked (7 products + 8 types); no horizontal overflow; zero Auto Sessions created. Screenshot: `release/auto-h3-20260907/verification/auto-h3.png`.
-- Mandatory packaged H3 workflow verification: source and packaged SHA-256 both `ba51289ee2a4d77dcebf9081a45a9842e3994abd637b3a90f5dae48564177bb0`; no stale output-token controls.
-- China ZIP CRC and Python module compilation verified. ZIP SHA-256: `bdad3901f1c5d03c638dfd2ac3ec39e075fe3bde37023bad47641e5982928de6`.
+- Mandatory packaged H3 workflow verification: source and packaged SHA-256 both `765a7862d5435569ce7198c396ed2a752c22fca0738c2954c53735a51cf60db3`; no stale output-token controls.
+- China ZIP CRC and Python module compilation verified. ZIP SHA-256: `10a352a4e3a89a2002c033d8196ddf7620a43269b8947bb5be4fc960db179f13`.
 
 Package audit also found a pre-existing duplicate `max_tokens` argument in the checked-in enhancer node. Removing only that duplicate restores the same signature as the prior `china-final-token-managed-20260904-180809` deployment, preserving LM Studio token ownership. Stale upstream tests and README counts were aligned with the already-existing PROYA override and exact-instance telemetry contract; the rewrite engine and its system prompt were not redesigned.
 

@@ -6,7 +6,7 @@ import { createRequire } from 'node:module';
 
 const require = createRequire(import.meta.url);
 const { verifyH3Package } = require('../../scripts/verify-h3-package.cjs');
-const packageResources = process.env.H3_PACKAGE_RESOURCES ?? join(process.cwd(), 'release/h3-vram-handoff/win-unpacked/resources');
+const packageResources = process.env.H3_PACKAGE_RESOURCES ?? join(process.cwd(), 'release/win-unpacked/resources');
 
 describe('H3 packaged workflow contract', () => {
   it.skipIf(!existsSync(packageResources))('checks the actual handoff package against source', () => {

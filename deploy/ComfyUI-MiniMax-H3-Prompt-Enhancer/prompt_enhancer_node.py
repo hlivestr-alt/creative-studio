@@ -959,23 +959,36 @@ class MiniMaxH3PromptValidator:
                  instrumental_style="none", acoustic_space="none", dialogue_coverage="off",
                  dialogue_language="auto", editing_intent="none", invent_scene=False, creative_latitude=None,
               lora_trigger_words=""):
-        # validate_prompt does not take the profile, so it is resolved only for its side effect
-        # on enhance_description below.
-        _resolved_latitude_name(creative_latitude, enhance_description, invent_scene)
-        enhance_description, invent_scene = _resolve_latitude(
-            creative_latitude, enhance_description, invent_scene)
-        report = validate_prompt(
-            prompt, mode, duration_seconds, source_prompt, reference_context,
-            ambience_foley_policy, background_score_policy, voice_performance,
-            aspect_ratio, media_manifest, multishot_shot_count, frame_count,
-            multishot_identity_lock, multishot_voice_lock, multishot_setting_lock,
-            (), creative_treatment_json, shot_plan_json, cinematography_json,
-            enhance_description=bool(enhance_description), delivery_target=delivery_target,
-            instrumental_description=instrumental_description, instrumental_style=instrumental_style,
-            acoustic_space=acoustic_space, dialogue_coverage=dialogue_coverage,
-            dialogue_language=dialogue_language,
-            editing_intent=editing_intent,
-        )
+        try:
+            # validate_prompt does not take the profile, so it is resolved only
+            # for its side effect on enhance_description below. Keep all of
+            # validation inside this guard so a validator exception still
+            # returns a durable invalid result for the cleanup node.
+            _resolved_latitude_name(creative_latitude, enhance_description, invent_scene)
+            enhance_description, invent_scene = _resolve_latitude(
+                creative_latitude, enhance_description, invent_scene)
+            report = validate_prompt(
+                prompt, mode, duration_seconds, source_prompt, reference_context,
+                ambience_foley_policy, background_score_policy, voice_performance,
+                aspect_ratio, media_manifest, multishot_shot_count, frame_count,
+                multishot_identity_lock, multishot_voice_lock, multishot_setting_lock,
+                (), creative_treatment_json, shot_plan_json, cinematography_json,
+                enhance_description=bool(enhance_description), delivery_target=delivery_target,
+                instrumental_description=instrumental_description, instrumental_style=instrumental_style,
+                acoustic_space=acoustic_space, dialogue_coverage=dialogue_coverage,
+                dialogue_language=dialogue_language,
+                editing_intent=editing_intent,
+            )
+        except Exception as exc:
+            # Validation is part of the prompt finalization phase. Return a
+            # durable invalid result so the exact Qwen unload node can still
+            # execute before the blocking validity gate.
+            report = {
+                "valid": False,
+                "errors": [f"Prompt validator exception: {exc}"],
+                "warnings": [],
+                "failureStage": "PROMPT_VALIDATION_FAILED",
+            }
         report_text = json.dumps(report, ensure_ascii=False, indent=2)
         return {
             "ui": {
@@ -1007,12 +1020,19 @@ class MiniMaxH3PromptValidityGate:
             "prompt": ("STRING", {"multiline": True, "default": "", "dynamicPrompts": False}),
             "valid": ("BOOLEAN", {"default": False}),
             "validation_report": ("STRING", {"multiline": True, "default": "", "dynamicPrompts": False}),
+        }, "optional": {
+            "unload_succeeded": ("BOOLEAN", {"default": True}),
+            "unload_error": ("STRING", {"multiline": True, "default": "", "dynamicPrompts": False}),
         }}
 
-    def gate(self, prompt, valid, validation_report):
+    def gate(self, prompt, valid, validation_report, unload_succeeded=True, unload_error=""):
         report = str(validation_report or "")
         if not bool(valid):
-            raise ValueError("MiniMax H3 prompt validation failed; H3 sampling was blocked. " + report)
+            cleanup = str(unload_error or "").strip() or "Qwen cleanup completed."
+            raise ValueError("PROMPT_VALIDATION_FAILED: H3 sampling was blocked after Qwen cleanup. " + cleanup + " " + report)
+        if not bool(unload_succeeded):
+            cleanup = str(unload_error or "").strip() or "LM Studio did not verify the exact Qwen instance as unloaded."
+            raise ValueError("LLM_UNLOAD_FAILED: H3 sampling was blocked because exact Qwen cleanup failed. " + cleanup)
         return str(prompt), True, report
 
 
@@ -1056,7 +1076,7 @@ class MiniMaxH3UnloadLMStudioModel:
         return json.loads(raw) if raw.strip() else {}
 
     @staticmethod
-    def _result(prompt, valid, validation_report, succeeded, error, instance_id, started_at):
+    def _result(prompt, valid, validation_report, succeeded, error, instance_id, started_at, requested=True):
         duration_ms = max(0, int(round((time.monotonic() - started_at) * 1000)))
         normalized_error = str(error).strip() if error else ""
         normalized_instance_id = str(instance_id).strip() if instance_id else ""
@@ -1065,6 +1085,7 @@ class MiniMaxH3UnloadLMStudioModel:
             "schemaVersion": 1,
             "instance_id": normalized_instance_id or None,
             "llm_instance_id": normalized_instance_id or None,
+            "unload_requested": bool(requested),
             "unload_succeeded": bool(succeeded),
             "unload_error": normalized_error or None,
             "unload_duration_ms": duration_ms,
@@ -1080,11 +1101,10 @@ class MiniMaxH3UnloadLMStudioModel:
         started_at = time.monotonic()
         target_instance_id = str(instance_id or "").strip()
         resolved_instance_id = target_instance_id
+        requested = bool(unload) and bool(target_instance_id)
         try:
-            if not bool(valid):
-                raise ValueError("MiniMax H3 prompt validation failed; LM Studio unload was not attempted.")
             if not bool(unload):
-                return self._result(prompt, True, validation_report, False, "Unload disabled by settings.", instance_id, started_at)
+                return self._result(prompt, valid, validation_report, False, "Unload disabled by settings.", instance_id, started_at, False)
             # Ignore legacy widget values; only the canonical prompt model is eligible.
             selected_model = PROMPT_ENGINE_MODEL_ID
             if not target_instance_id:
@@ -1126,6 +1146,10 @@ class MiniMaxH3UnloadLMStudioModel:
             )
             if still_loaded:
                 raise ValueError("LM Studio still reports the exact prompt-model instance after unload.")
-            return self._result(prompt, True, validation_report, True, "", resolved_instance_id, started_at)
+            return self._result(prompt, valid, validation_report, True, "", resolved_instance_id, started_at, requested)
         except Exception as exc:
-            raise RuntimeError(f"LM Studio exact-instance unload failed for {resolved_instance_id or 'unknown'}: {exc}") from exc
+            return self._result(
+                prompt, valid, validation_report, False,
+                f"LM Studio exact-instance unload failed for {resolved_instance_id or 'unknown'}: {exc}",
+                resolved_instance_id, started_at, requested,
+            )

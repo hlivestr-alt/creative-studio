@@ -16,8 +16,11 @@ import {
   type H3PromptEngineSettings,
   type H3PromptEngineStatus,
   type H3PipelineStage,
+  type H3RemoteLifecycleInspection,
+  type H3VramReleaseAuthorization,
   type H3VramReleaseAudit,
   type H3VramSnapshot,
+  type QwenRecoveryAudit,
   type RemoteComfySystemInfo,
   type RemoteH3GenerationRequest
 } from '../../src/domain/types';
@@ -53,7 +56,9 @@ export interface ComputeProvider {
   getOutputUrl(output: ComfyOutputFile): string;
   downloadOutput(output: ComfyOutputFile, destinationDirectory: string, signal?: AbortSignal): Promise<ComfyDownloadResult>;
   assertQueueIdle(): Promise<void>;
-  releaseH3Vram(remotePromptId: string, onRequested?: () => void): Promise<H3VramReleaseAudit>;
+  recoverStaleQwen(): Promise<QwenRecoveryAudit>;
+  inspectH3Lifecycle(remotePromptId: string | null, recoveryIdentity?: string | null): Promise<H3RemoteLifecycleInspection>;
+  releaseH3Vram(authorization: H3VramReleaseAuthorization, onProgress?: (audit: H3VramReleaseAudit) => void): Promise<H3VramReleaseAudit>;
 }
 
 export interface RemoteComfyProviderConfig {
@@ -88,6 +93,10 @@ interface ComfyQueueResponse {
   queue_pending?: unknown;
 }
 
+interface QwenRecoveryResponse extends QwenRecoveryAudit {
+  error?: unknown;
+}
+
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
@@ -98,6 +107,37 @@ function asNumber(value: unknown): number | null {
 
 function asString(value: unknown): string | null {
   return typeof value === 'string' && value.trim() ? value.trim() : null;
+}
+
+const PROMPT_CLEANUP_MARKER = /\[PROYA_LLM_CLEANUP\]\s*(\{.*\})\s*$/s;
+
+function promptCleanupAudit(message: string): Partial<ComputeJobState> {
+  const match = PROMPT_CLEANUP_MARKER.exec(message);
+  if (!match) return {};
+  try {
+    const parsed: unknown = JSON.parse(match[1]);
+    if (!isRecord(parsed)) return {};
+    const requested = typeof parsed.unload_requested === 'boolean' ? parsed.unload_requested : undefined;
+    const succeeded = typeof parsed.unload_succeeded === 'boolean' ? parsed.unload_succeeded : undefined;
+    const error = asString(parsed.unload_error);
+    const instanceId = asString(parsed.instance_id) ?? asString(parsed.llm_instance_id);
+    const duration = asNumber(parsed.unload_duration_ms);
+    return {
+      ...(requested === undefined ? {} : { llmUnloadRequested: requested }),
+      ...(succeeded === undefined ? {} : { llmUnloadSucceeded: succeeded }),
+      ...(parsed.unload_error === null ? { llmUnloadError: null } : error ? { llmUnloadError: error } : {}),
+      ...(instanceId ? { llmInstanceId: instanceId } : {}),
+      ...(duration === null ? {} : { llmUnloadDurationMs: duration })
+    };
+  } catch {
+    return {};
+  }
+}
+
+function promptGateFailureStage(message: string): Extract<H3PipelineStage, 'PROMPT_VALIDATION_FAILED' | 'LLM_UNLOAD_FAILED'> | null {
+  if (/\bPROMPT_VALIDATION_FAILED\b/i.test(message)) return 'PROMPT_VALIDATION_FAILED';
+  if (/\bLLM_UNLOAD_FAILED\b/i.test(message)) return 'LLM_UNLOAD_FAILED';
+  return null;
 }
 
 /** ComfyUI 0.34.x requires the prompt ID to be canonical lowercase UUID text. */
@@ -122,16 +162,19 @@ export type H3PromptEngineFailureStage = Extract<H3PipelineStage, 'PROMPT_GENERA
 
 /** Classify node 149 errors without confusing a prompt timeout with transport failure. */
 export function classifyH3PromptEngineError(message: string): H3PromptEngineFailureStage {
-  if (/\b(?:timed?\s*out|time\s*out|timeout|deadline\s+exceeded|client\s+disconnected|stopping\s+generation)\b/i.test(message)) {
+  // Cleanup telemetry is appended after the original exception. Never let an
+  // unload timeout rewrite the prompt-generation failure that caused it.
+  const originalMessage = message.replace(PROMPT_CLEANUP_MARKER, '').trim();
+  if (/\b(?:timed?\s*out|time\s*out|timeout|deadline\s+exceeded|client\s+disconnected|stopping\s+generation)\b/i.test(originalMessage)) {
     return 'PROMPT_GENERATION_TIMEOUT';
   }
-  if (/(?:connection\s+refused|cannot\s+reach|could\s+not\s+connect|connection\s+(?:reset|failed)|network\s+unavailable|model\s+(?:is\s+)?(?:not\s+found|unavailable|not\s+loaded)|(?:no|missing)\s+(?:active\s+|suitable\s+)?(?:chat\s+|prompt\s+)?model|returned\s+HTTP\s+[45]\d{2}|endpoint)/i.test(message)) {
+  if (/(?:connection\s+refused|cannot\s+reach|could\s+not\s+connect|connection\s+(?:reset|failed)|network\s+unavailable|model\s+(?:is\s+)?(?:not\s+found|unavailable|not\s+loaded)|(?:no|missing)\s+(?:active\s+|suitable\s+)?(?:chat\s+|prompt\s+)?model|returned\s+HTTP\s+[45]\d{2}|endpoint)/i.test(originalMessage)) {
     return 'LLM_UNAVAILABLE';
   }
   return 'PROMPT_GENERATION_FAILED';
 }
 
-export function h3PromptEngineAudit(settings: H3PromptEngineSettings | null | undefined): Pick<ComputeJobState, 'llmModel' | 'llmModelId' | 'llmTemperature' | 'llmTimeoutSeconds' | 'llmRepairAttempts' | 'repairAttemptsConfigured' | 'llmDisableThinking'> {
+export function h3PromptEngineAudit(settings: H3PromptEngineSettings | null | undefined): Pick<ComputeJobState, 'llmModel' | 'llmModelId' | 'llmTemperature' | 'llmTimeoutSeconds' | 'llmRepairAttempts' | 'repairAttemptsConfigured' | 'llmDisableThinking' | 'llmUnloadRequested'> {
   if (!settings) return {};
   const model = h3PromptEngineModelId;
   return {
@@ -140,11 +183,13 @@ export function h3PromptEngineAudit(settings: H3PromptEngineSettings | null | un
     llmTimeoutSeconds: settings.timeoutSeconds,
     llmRepairAttempts: settings.repairAttempts,
     repairAttemptsConfigured: settings.repairAttempts,
-    llmDisableThinking: settings.disableThinking
+    llmDisableThinking: settings.disableThinking,
+    llmUnloadRequested: settings.unloadModelBeforeH3
   };
 }
 
 export function h3PromptEngineErrorMessage(message: string, settings?: H3PromptEngineSettings | null): string {
+  if (promptGateFailureStage(message)) return message;
   if (classifyH3PromptEngineError(message) !== 'PROMPT_GENERATION_TIMEOUT') return message;
   const timeoutSeconds = settings?.timeoutSeconds ?? 600;
   return `Prompt generation exceeded the configured ${timeoutSeconds}-second timeout for the rewrite and repair attempts.`;
@@ -296,10 +341,23 @@ export function normalizeComfyUrl(value: string): string {
 function endpointFor(baseUrl: string, path: string): string {
   const url = new URL(baseUrl);
   const basePath = url.pathname.replace(/\/+$/, '');
-  url.pathname = `${basePath}/${path.replace(/^\/+/, '')}`;
-  url.search = '';
+  const separator = path.indexOf('?');
+  const pathname = separator >= 0 ? path.slice(0, separator) : path;
+  url.pathname = `${basePath}/${pathname.replace(/^\/+/, '')}`;
+  url.search = separator >= 0 ? path.slice(separator + 1) : '';
   url.hash = '';
   return url.toString();
+}
+
+function isFreshControlPlaneGet(path: string, method: string | undefined): boolean {
+  if ((method ?? 'GET').toUpperCase() !== 'GET') return false;
+  const pathname = path.split('?', 1)[0].replace(/^\/+/, '');
+  return pathname === 'queue' || pathname === 'history' || pathname.startsWith('history/') || pathname === 'system_stats';
+}
+
+function redactedControlPlaneUrl(value: string): string {
+  const url = new URL(value);
+  return `<remote>${url.pathname}${url.search}`;
 }
 
 function websocketEndpointFor(baseUrl: string, clientId: string): string {
@@ -393,6 +451,38 @@ function findHistoryEntry(payload: unknown, remotePromptId: string): Record<stri
     return isRecord(entry) ? entry : null;
   }
   return payload.prompt_id === remotePromptId ? payload : null;
+}
+
+type HistoryEntryWithId = { promptId: string; entry: Record<string, unknown> };
+
+function historyEntries(payload: unknown): HistoryEntryWithId[] {
+  if (!isRecord(payload)) return [];
+  const entries: HistoryEntryWithId[] = [];
+  const seen = new Set<string>();
+  const add = (promptId: unknown, entry: unknown) => {
+    if (!isCanonicalComfyPromptId(promptId) || !isRecord(entry) || seen.has(promptId)) return;
+    seen.add(promptId);
+    entries.push({ promptId, entry });
+  };
+  for (const [promptId, entry] of Object.entries(payload)) add(promptId, entry);
+  if (Array.isArray(payload.history)) {
+    for (const entry of payload.history) if (isRecord(entry)) add(entry.prompt_id, entry);
+  }
+  add(payload.prompt_id, payload);
+  return entries;
+}
+
+function findHistoryEntryByIdentity(payload: unknown, identity: string, baseUrl: string): HistoryEntryWithId | null {
+  const needle = identity.trim();
+  if (!needle) return null;
+  for (const candidate of historyEntries(payload)) {
+    const outputs = extractComfyOutputs(baseUrl, candidate.entry.outputs);
+    const exactOutput = outputs.some((output) => output.kind === 'video' && output.filename.includes(needle));
+    let serialized = '';
+    try { serialized = JSON.stringify(candidate.entry); } catch { /* ignore malformed history values */ }
+    if (exactOutput || serialized.includes(needle)) return candidate;
+  }
+  return null;
 }
 
 function historyError(entry: Record<string, unknown>): string | null {
@@ -565,7 +655,7 @@ function structuredOutput(value: unknown): Record<string, unknown> | null {
     const parsed = parseJsonRecord(value[key]);
     if (parsed) return parsed;
   }
-  if (['enhanced_prompt', 'enhancement_manifest', 'repair_attempts_used', 'prompt', 'valid', 'validation_report', 'unload_succeeded', 'instance_id', 'llm_instance_id'].some((key) => key in value)) return value;
+  if (['enhanced_prompt', 'enhancement_manifest', 'repair_attempts_used', 'prompt', 'valid', 'validation_report', 'unload_requested', 'unload_succeeded', 'instance_id', 'llm_instance_id'].some((key) => key in value)) return value;
   const ui = value.ui;
   return isRecord(ui) ? structuredOutput(ui) : null;
 }
@@ -620,6 +710,7 @@ export function executionMetadata(outputs: unknown): Partial<ComputeJobState> {
     ?? serializedOutput(enhancerStructured?.rewriteDiagnostics);
   const structuredUnloadSucceeded = outputBoolean(unloadStructured?.unload_succeeded, ['unload_succeeded', 'unloaded', 'success'])
     ?? outputBoolean(unloadStructured?.unloadSucceeded, ['unload_succeeded', 'unloaded', 'success']);
+  const structuredUnloadRequested = outputBoolean(unloadStructured?.unload_requested, ['unload_requested', 'requested']);
   const fallbackUnloadSucceeded = outputBoolean(outputSlot(unloadOutput, 3), ['unload_succeeded', 'unloaded', 'success']);
   const unloadSucceeded = unloadStructured ? structuredUnloadSucceeded : fallbackUnloadSucceeded;
   const unloadError = unloadStructured
@@ -641,6 +732,7 @@ export function executionMetadata(outputs: unknown): Partial<ComputeJobState> {
     ...(rewriteDiagnostics ? { rewriteDiagnostics } : {}),
     ...(finalEnhancedPrompt ? { promptCaptureSource: structuredPrompt ? 'structured' as const : 'fallback_raw_history' as const } : {}),
     ...(validationReport ? { validationCaptureSource: structuredValidationReport ? 'structured' as const : 'fallback_raw_history' as const } : {}),
+    ...(structuredUnloadRequested !== null ? { llmUnloadRequested: structuredUnloadRequested } : {}),
     ...(unloadSucceeded !== null ? { llmUnloadSucceeded: unloadSucceeded, llmUnloadError: unloadError } : {}),
     ...(llmInstanceId ? { llmInstanceId } : {}),
     ...(llmUnloadDurationMs !== null ? { llmUnloadDurationMs } : {})
@@ -700,6 +792,8 @@ export class LocalComputeProvider implements ComputeProvider {
   }
 
   async assertQueueIdle(): Promise<void> { throw new Error('Local mode has no ComfyUI queue.'); }
+  async recoverStaleQwen(): Promise<QwenRecoveryAudit> { throw new Error('Local mode has no LM Studio prompt engine.'); }
+  async inspectH3Lifecycle(): Promise<H3RemoteLifecycleInspection> { throw new Error('Local mode has no remote ComfyUI lifecycle.'); }
   async releaseH3Vram(): Promise<H3VramReleaseAudit> { throw new Error('Local mode has no H3 GPU.'); }
 }
 
@@ -922,6 +1016,112 @@ export class RemoteComfyComputeProvider implements ComputeProvider {
     }
   }
 
+  /**
+   * Read the remote lifecycle directly before the Qwen handoff. A persisted
+   * local status is never enough to decide that an H3 prompt is still active.
+   */
+  async inspectH3Lifecycle(remotePromptId: string | null, recoveryIdentity: string | null = null): Promise<H3RemoteLifecycleInspection> {
+    const queueResponse = await this.requestJsonResponse<ComfyQueueResponse>('/queue');
+    const queue = queueResponse.payload;
+    const queueDiagnostics = {
+      queueSampleTimestamp: queueResponse.receivedAt,
+      queueRequestUrl: redactedControlPlaneUrl(queueResponse.url),
+      queueFreshness: 'FRESH' as const
+    };
+    const running = Array.isArray(queue.queue_running) ? queue.queue_running : null;
+    const pending = Array.isArray(queue.queue_pending) ? queue.queue_pending : null;
+    if (!running || !pending) throw new Error('Cannot reconcile H3 lifecycle; /queue did not return running and pending arrays.');
+
+    if (!isCanonicalComfyPromptId(remotePromptId)) {
+      const queueState = running.length === 0 && pending.length === 0 ? 'empty' : 'busy_other';
+      return { queueState, historyState: 'not_checked', remoteState: null, outputCaptured: false, ...queueDiagnostics };
+    }
+
+    let historyPayload: unknown = {};
+    let historyDiagnostics: Pick<H3RemoteLifecycleInspection, 'historySampleTimestamp' | 'historyRequestUrl' | 'historyFreshness'> = {
+      historySampleTimestamp: null, historyRequestUrl: null, historyFreshness: 'UNAVAILABLE'
+    };
+    try {
+      const historyResponse = await this.requestJsonResponse(`/history/${encodeURIComponent(remotePromptId)}`);
+      historyPayload = historyResponse.payload;
+      historyDiagnostics = { historySampleTimestamp: historyResponse.receivedAt, historyRequestUrl: redactedControlPlaneUrl(historyResponse.url), historyFreshness: 'FRESH' };
+    } catch (reason) {
+      if (!/\(404\)/.test(errorMessage(reason))) throw reason;
+      if (isRecord(reason)) historyDiagnostics = {
+        historySampleTimestamp: asString(reason.receivedAt),
+        historyRequestUrl: asString(reason.url) ? redactedControlPlaneUrl(asString(reason.url)!) : null,
+        historyFreshness: 'FRESH'
+      };
+    }
+    let promptIdForInspection = remotePromptId;
+    let entry = findHistoryEntry(historyPayload, remotePromptId);
+    let recoverySource: 'recent_history' | null = null;
+    if (!entry && recoveryIdentity?.trim()) {
+      let recentHistory: unknown = {};
+      try {
+        const recentResponse = await this.requestJsonResponse('/history');
+        recentHistory = recentResponse.payload;
+        historyDiagnostics = { historySampleTimestamp: recentResponse.receivedAt, historyRequestUrl: redactedControlPlaneUrl(recentResponse.url), historyFreshness: 'FRESH' };
+      } catch (reason) {
+        if (!/\(404\)/.test(errorMessage(reason))) throw reason;
+      }
+      const recovered = findHistoryEntryByIdentity(recentHistory, recoveryIdentity, this.baseUrl);
+      if (recovered) {
+        promptIdForInspection = recovered.promptId;
+        entry = recovered.entry;
+        recoverySource = 'recent_history';
+      }
+    }
+
+    const runningItem = running.find((item) => queueItemPromptId(item) === promptIdForInspection);
+    const pendingItem = pending.find((item) => queueItemPromptId(item) === promptIdForInspection);
+    const queueState = runningItem !== undefined
+      ? 'queue_running'
+      : pendingItem !== undefined
+        ? 'queue_pending'
+        : running.length === 0 && pending.length === 0 ? 'empty' : 'busy_other';
+
+    if (!entry) return { queueState, historyState: 'missing', remoteState: null, outputCaptured: false, ...queueDiagnostics, ...historyDiagnostics };
+
+    const error = historyError(entry);
+    const outputs = extractComfyOutputs(this.baseUrl, entry.outputs);
+    const parsedStatus = historyStatus(entry);
+    const videoOutputCaptured = findComfyVideoOutputs(outputs).length > 0;
+    // A matching MP4 is stronger completion evidence than a stale error marker:
+    // it proves the exact Auto Run output exists and must not be rendered again.
+    const effectiveError = videoOutputCaptured ? null : error;
+    const promptEngine = this.promptEngineByPromptId.get(promptIdForInspection) ?? this.promptEngineByPromptId.get(remotePromptId);
+    const gateFailure = effectiveError ? promptGateFailureStage(effectiveError) : null;
+    const classifiedError = effectiveError ? classifyH3PromptEngineError(effectiveError) : null;
+    const promptFailure = !gateFailure && classifiedError && classifiedError !== 'PROMPT_GENERATION_FAILED' ? classifiedError : null;
+    const remoteState = this.makeState(null, promptIdForInspection, effectiveError ? 'failed' : videoOutputCaptured || parsedStatus.status === 'completed' ? 'completed' : parsedStatus.status, {
+      progress: effectiveError ? null : videoOutputCaptured ? 1 : parsedStatus.progress,
+      queueRemaining: parsedStatus.queueRemaining,
+      outputs,
+      ...executionMetadata(entry.outputs),
+      promptEngine: promptEngine ?? null,
+      ...h3PromptEngineAudit(promptEngine),
+      ...promptCleanupAudit(effectiveError ?? error ?? ''),
+      ...(gateFailure ? { pipelineStage: gateFailure, failureStage: gateFailure } : {}),
+      ...(promptFailure ? { pipelineStage: promptFailure, failureStage: promptFailure } : {}),
+      error: effectiveError ? h3PromptEngineErrorMessage(effectiveError, promptEngine) : null
+    });
+    const historyState = effectiveError
+      ? 'failed'
+      : videoOutputCaptured || parsedStatus.status === 'completed' ? 'completed'
+        : parsedStatus.status === 'running' ? 'running' : 'queued';
+    return {
+      queueState,
+      historyState,
+      remoteState,
+      outputCaptured: outputs.length > 0,
+      recoveredPromptId: recoverySource ? promptIdForInspection : null,
+      recoverySource,
+      ...queueDiagnostics,
+      ...historyDiagnostics
+    };
+  }
+
   async getJobState(remotePromptId: string): Promise<ComputeJobState> {
     requireCanonicalComfyPromptId(remotePromptId);
     const historyPayload = await this.requestJson(`/history/${encodeURIComponent(remotePromptId)}`);
@@ -931,8 +1131,12 @@ export class RemoteComfyComputeProvider implements ComputeProvider {
       const outputs = extractComfyOutputs(this.baseUrl, entry.outputs);
       const parsedStatus = historyStatus(entry);
       const promptEngine = this.promptEngineByPromptId.get(remotePromptId);
+      const gateFailure = error ? promptGateFailureStage(error) : null;
       const classifiedError = error ? classifyH3PromptEngineError(error) : null;
-      const promptFailure = classifiedError && classifiedError !== 'PROMPT_GENERATION_FAILED' ? classifiedError : null;
+      // A gate marker is authoritative even when the validation report happens
+      // to contain words such as "timeout" that the generic classifier would
+      // otherwise mistake for a prompt-generation timeout.
+      const promptFailure = !gateFailure && classifiedError && classifiedError !== 'PROMPT_GENERATION_FAILED' ? classifiedError : null;
       return this.makeState(null, remotePromptId, error ? 'failed' : parsedStatus.status, {
         progress: error ? null : parsedStatus.progress,
         queueRemaining: parsedStatus.queueRemaining,
@@ -940,6 +1144,8 @@ export class RemoteComfyComputeProvider implements ComputeProvider {
         ...executionMetadata(entry.outputs),
         promptEngine: promptEngine ?? null,
         ...h3PromptEngineAudit(promptEngine),
+        ...promptCleanupAudit(error ?? ''),
+        ...(gateFailure ? { pipelineStage: gateFailure, failureStage: gateFailure } : {}),
         ...(promptFailure ? { pipelineStage: promptFailure, failureStage: promptFailure } : {}),
         error: error ? h3PromptEngineErrorMessage(error, promptEngine) : null
       });
@@ -965,6 +1171,90 @@ export class RemoteComfyComputeProvider implements ComputeProvider {
     }
   }
 
+  /**
+   * Recover only a stale canonical Qwen instance before a new prompt job.
+   * LM Studio is loopback-owned by the execution PC, so the ComfyUI extension
+   * performs the native model inspection/unload and this client performs the
+   * normal ComfyUI cache release after the extension confirms the queue is idle.
+   */
+  async recoverStaleQwen(): Promise<QwenRecoveryAudit> {
+    const audit: QwenRecoveryAudit = {
+      activePromptJob: false,
+      staleQwenDetected: false,
+      staleQwenInstanceId: null,
+      staleQwenUnloadAttempted: false,
+      staleQwenUnloadSucceeded: null,
+      staleQwenUnloadError: null,
+      comfyFreeAttempted: false,
+      comfyFreeSucceeded: null,
+      observedFreeVram: null,
+      qwenRecoveryError: null
+    };
+    const readFreeVram = async (): Promise<number | null> => {
+      try {
+        const payload = await this.requestJson('/system_stats');
+        if (!isRecord(payload) || !Array.isArray(payload.devices)) return null;
+        const gpu = payload.devices.find((device) => isRecord(device) && asString(device.type) !== 'cpu');
+        return isRecord(gpu) ? asNumber(gpu.vram_free) : null;
+      } catch {
+        return null;
+      }
+    };
+    audit.observedFreeVram = await readFreeVram();
+    let response: QwenRecoveryResponse;
+    try {
+      response = await this.requestJson<QwenRecoveryResponse>('/proya/auto/qwen-recovery', {
+        method: 'POST',
+        body: JSON.stringify({ endpoint: 'http://127.0.0.1:1234/v1', api_key: '', allow_remote_endpoint: false })
+      });
+      Object.assign(audit, {
+        activePromptJob: typeof response.activePromptJob === 'boolean' ? response.activePromptJob : audit.activePromptJob,
+        staleQwenDetected: typeof response.staleQwenDetected === 'boolean' ? response.staleQwenDetected : audit.staleQwenDetected,
+        staleQwenInstanceId: asString(response.staleQwenInstanceId),
+        staleQwenUnloadAttempted: typeof response.staleQwenUnloadAttempted === 'boolean' ? response.staleQwenUnloadAttempted : audit.staleQwenUnloadAttempted,
+        staleQwenUnloadSucceeded: typeof response.staleQwenUnloadSucceeded === 'boolean' ? response.staleQwenUnloadSucceeded : audit.staleQwenUnloadSucceeded,
+        staleQwenUnloadError: asString(response.staleQwenUnloadError),
+        qwenRecoveryError: asString(response.qwenRecoveryError) ?? asString(response.error)
+      });
+    } catch (reason) {
+      audit.qwenRecoveryError = errorMessage(reason);
+      audit.observedFreeVram = await readFreeVram();
+      return audit;
+    }
+    if (audit.activePromptJob) {
+      audit.qwenRecoveryError ??= 'An active ComfyUI prompt job owns the execution queue; stale Qwen cleanup was skipped.';
+      audit.observedFreeVram = await readFreeVram();
+      return audit;
+    }
+    const totalVram = await this.readVramTotal();
+    const excessiveVram = audit.observedFreeVram !== null && totalVram !== null
+      && audit.observedFreeVram < this.requiredQwenFreeVramBytes(totalVram);
+    if (audit.staleQwenDetected || excessiveVram) {
+      audit.comfyFreeAttempted = true;
+      try {
+        await this.assertQueueIdle();
+        await this.requestJson('/free', { method: 'POST', body: JSON.stringify({ unload_models: true, free_memory: true }) });
+        audit.comfyFreeSucceeded = true;
+      } catch (reason) {
+        audit.comfyFreeSucceeded = false;
+        audit.qwenRecoveryError ??= `ComfyUI /free failed during stale Qwen recovery: ${errorMessage(reason)}`;
+      }
+    }
+    audit.observedFreeVram = await readFreeVram() ?? audit.observedFreeVram;
+    return audit;
+  }
+
+  private async readVramTotal(): Promise<number | null> {
+    try {
+      const payload = await this.requestJson('/system_stats');
+      if (!isRecord(payload) || !Array.isArray(payload.devices)) return null;
+      const gpu = payload.devices.find((device) => isRecord(device) && asString(device.type) !== 'cpu');
+      return isRecord(gpu) ? asNumber(gpu.vram_total) : null;
+    } catch {
+      return null;
+    }
+  }
+
   private async isQueueIdle(signal: AbortSignal): Promise<boolean> {
     const queue = await this.requestJson<ComfyQueueResponse>('/queue', { signal });
     if (!queue || !Array.isArray(queue.queue_running) || !Array.isArray(queue.queue_pending)) {
@@ -973,23 +1263,44 @@ export class RemoteComfyComputeProvider implements ComputeProvider {
     return queue.queue_running.length === 0 && queue.queue_pending.length === 0;
   }
 
+  private requiredQwenFreeVramBytes(totalBytes: number): number {
+    return totalBytes - Math.max(2 * 1024 ** 3, totalBytes * 0.1);
+  }
+
   /** /free only acknowledges executor flags. Keep the GPU handoff open until idle cleanup settles. */
-  async releaseH3Vram(remotePromptId: string, onRequested?: () => void): Promise<H3VramReleaseAudit> {
+  async releaseH3Vram(authorization: H3VramReleaseAuthorization, onProgress?: (audit: H3VramReleaseAudit) => void): Promise<H3VramReleaseAudit> {
     const startedAt = Date.now();
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), 20_000);
     let requested = false;
     let before: H3VramSnapshot | null = null;
     let after: H3VramSnapshot | null = null;
+    let freeRequestUrl: string | null = null;
+    const freeRequestBody = JSON.stringify({ unload_models: true, free_memory: true });
+    let freeRequestStatus: number | null = null;
+    let freeRequestResult: string | null = null;
+    let requiredFreeBytes: number | null = null;
+    let pollAttempts = 0;
+    let postMeasurementFresh = false;
     const result = (succeeded: boolean | null, error: string | null): H3VramReleaseAudit => ({
       h3VramReleaseRequested: requested, h3VramReleaseSucceeded: succeeded,
       h3VramReleaseDurationMs: Date.now() - startedAt, h3VramReleaseError: error,
-      h3VramBeforeRelease: before, h3VramAfterRelease: after
+      h3VramBeforeRelease: before, h3VramAfterRelease: after,
+      h3FreeRequestUrl: freeRequestUrl, h3FreeRequestBody: freeRequestBody,
+      h3FreeRequestStatus: freeRequestStatus, h3FreeRequestResult: freeRequestResult,
+      h3VramRequiredFreeBytes: requiredFreeBytes,
+      h3VramVerification: succeeded === true ? 'PASSED' : succeeded === false ? 'FAILED' : succeeded === null && requested ? 'UNAVAILABLE' : null,
+      h3VramPollAttempts: pollAttempts, h3VramPostMeasurementFresh: postMeasurementFresh
     });
+    const publish = (succeeded: boolean | null = null, error: string | null = null) => onProgress?.(result(succeeded, error));
     const signal = () => AbortSignal.any([controller.signal, AbortSignal.timeout(3000)]);
+    let sampleNumber = 0;
     const snapshot = async (): Promise<H3VramSnapshot | null> => {
       try {
-        const payload = await this.requestJson('/system_stats', { signal: signal() });
+        const sampleId = `${Date.now()}-${++sampleNumber}-${randomUUID()}`;
+        const payload = await this.requestJson(`/system_stats?proya_vram_sample=${encodeURIComponent(sampleId)}`, {
+          signal: signal(), cache: 'no-store', headers: { 'Cache-Control': 'no-cache, no-store', Pragma: 'no-cache' }
+        });
         if (!isRecord(payload) || !Array.isArray(payload.devices)) return null;
         const devices = payload.devices.filter(isRecord).map((device) => ({
           name: asString(device.name), type: asString(device.type),
@@ -1000,12 +1311,9 @@ export class RemoteComfyComputeProvider implements ComputeProvider {
       } catch { return null; }
     };
     try {
+      if (authorization.completionProven !== true) throw new Error('H3 VRAM release requires an authoritative completed-lifecycle authorization.');
+      const remotePromptId = authorization.previousPromptId;
       requireCanonicalComfyPromptId(remotePromptId);
-      const history = await this.requestJson(`/history/${remotePromptId}`, { signal: signal() });
-      const entry = findHistoryEntry(history, remotePromptId);
-      if (!entry || (historyStatus(entry).status !== 'completed' && !historyError(entry))) {
-        return result(false, 'H3 execution has not finished in ComfyUI history; VRAM release was not requested.');
-      }
       // Never set unload flags while any job is running or waiting to render.
       const idleDeadline = Date.now() + 3000;
       while (!await this.isQueueIdle(signal())) {
@@ -1013,18 +1321,35 @@ export class RemoteComfyComputeProvider implements ComputeProvider {
         await wait(250, controller.signal);
       }
       before = await snapshot();
+      const beforeGpu = before?.devices.filter((device) => device.type !== null && device.type !== 'cpu') ?? [];
+      requiredFreeBytes = beforeGpu.length > 0 && beforeGpu.every((device) => device.vramTotalBytes !== null && device.vramTotalBytes > 0)
+        ? Math.max(...beforeGpu.map((device) => this.requiredQwenFreeVramBytes(device.vramTotalBytes!)))
+        : null;
+      publish();
       // Telemetry may take time: recheck immediately before the mutation.
       if (!await this.isQueueIdle(signal())) return result(false, 'ComfyUI queue became busy; H3 VRAM release was not requested.');
       requested = true;
-      onRequested?.();
-      await this.requestJson('/free', { method: 'POST', body: JSON.stringify({ unload_models: true, free_memory: true }), signal: signal() });
+      freeRequestUrl = endpointFor(this.baseUrl, '/free');
+      publish();
+      const freeResponse = await this.requestJsonResponse('/free', { method: 'POST', body: freeRequestBody, signal: signal() });
+      const freeCompletedAt = Date.now();
+      freeRequestUrl = freeResponse.url;
+      freeRequestStatus = freeResponse.status;
+      freeRequestResult = typeof freeResponse.payload === 'string'
+        ? freeResponse.payload.slice(0, 500)
+        : JSON.stringify(freeResponse.payload).slice(0, 500);
+      if (!freeRequestResult) freeRequestResult = freeResponse.statusText || 'HTTP success with empty response body';
+      publish();
       const releaseDeadline = Math.min(startedAt + 19_000, Date.now() + 15_000);
       let consecutiveReleased = 0;
       let measuredRetained = false;
       while (Date.now() < releaseDeadline && !controller.signal.aborted) {
         await wait(1000, controller.signal);
         if (!await this.isQueueIdle(signal())) return result(false, 'ComfyUI became busy during the H3 VRAM handoff; release could not be verified.');
+        const sampleRequestedAt = Date.now();
         after = await snapshot();
+        pollAttempts += 1;
+        postMeasurementFresh = Boolean(after && sampleRequestedAt >= freeCompletedAt && Date.parse(after.capturedAt) >= freeCompletedAt);
         const gpuDevices = after?.devices.filter((device) => device.type !== null && device.type !== 'cpu') ?? [];
         const measurable = gpuDevices.length > 0 && gpuDevices.every((device) => device.torchReservedBytes !== null && device.torchReservedBytes >= 0
           && device.vramTotalBytes !== null && device.vramTotalBytes > 0 && device.vramFreeBytes !== null && device.vramFreeBytes >= 0 && device.vramFreeBytes <= device.vramTotalBytes);
@@ -1033,13 +1358,17 @@ export class RemoteComfyComputeProvider implements ComputeProvider {
         // cudaMallocAsync/other processes can occupy the device without appearing
         // in Torch reservations. Also require device headroom, allowing OS/display
         // overhead of 2 GiB or 10% of capacity. This does not tune Qwen offload.
-        const released = measurable && gpuDevices.every((device) => device.torchReservedBytes! <= 256 * 1024 * 1024
-          && device.vramTotalBytes! - device.vramFreeBytes! <= Math.max(2 * 1024 ** 3, device.vramTotalBytes! * 0.1));
+        if (measurable) requiredFreeBytes = Math.max(...gpuDevices.map((device) => this.requiredQwenFreeVramBytes(device.vramTotalBytes!)));
+        const released = postMeasurementFresh && measurable && gpuDevices.every((device) => device.torchReservedBytes! <= 256 * 1024 * 1024
+          && device.vramFreeBytes! >= this.requiredQwenFreeVramBytes(device.vramTotalBytes!));
         const knownOccupied = gpuDevices.some((device) => (device.torchReservedBytes ?? 0) > 256 * 1024 * 1024
           || device.vramTotalBytes !== null && device.vramTotalBytes > 0 && device.vramFreeBytes !== null && device.vramFreeBytes >= 0
-            && device.vramTotalBytes - device.vramFreeBytes > Math.max(2 * 1024 ** 3, device.vramTotalBytes * 0.1));
+            && device.vramFreeBytes < this.requiredQwenFreeVramBytes(device.vramTotalBytes));
         if (released || knownOccupied) measuredRetained = knownOccupied;
         consecutiveReleased = released ? consecutiveReleased + 1 : 0;
+        publish(released ? null : false, released ? null : measurable
+          ? `GPU memory is not yet safe for Qwen: ${Math.min(...gpuDevices.map((device) => device.vramFreeBytes!))} bytes free; need at least ${requiredFreeBytes} bytes.`
+          : 'Fresh post-release GPU telemetry is not yet measurable.');
         if (consecutiveReleased >= 2 && await this.isQueueIdle(signal())) return result(true, null);
       }
       if (!await this.isQueueIdle(signal())) return result(false, 'ComfyUI queue is not idle after the H3 VRAM release wait.');
@@ -1047,6 +1376,15 @@ export class RemoteComfyComputeProvider implements ComputeProvider {
         ? result(false, 'GPU memory remains occupied after the bounded H3 VRAM release wait (ComfyUI caches or another process). Retry the handoff before starting Qwen.')
         : result(null, 'ComfyUI accepted /free and the idle wait finished, but GPU telemetry could not verify H3 VRAM release.');
     } catch (reason) {
+      if (isRecord(reason)) {
+        freeRequestStatus ??= asNumber(reason.status);
+        freeRequestUrl ??= asString(reason.url);
+        const responsePayload = reason.payload;
+        if (responsePayload !== undefined) {
+          try { freeRequestResult ??= JSON.stringify(responsePayload).slice(0, 500); }
+          catch { freeRequestResult ??= errorMessage(responsePayload).slice(0, 500); }
+        }
+      }
       return result(false, `H3 VRAM release failed: ${errorMessage(reason)}`);
     } finally {
       clearTimeout(timeout);
@@ -1284,20 +1622,37 @@ export class RemoteComfyComputeProvider implements ComputeProvider {
     await this.requestJson('/proya/auto/interrupt', { method: 'POST', body: JSON.stringify({ promptId: remotePromptId }) });
   }
 
-  private async requestJson<T = unknown>(path: string, init: RequestInit = {}): Promise<T> {
+  private async requestJsonResponse<T = unknown>(path: string, init: RequestInit = {}): Promise<{ payload: T; status: number; statusText: string; url: string; receivedAt: string }> {
     const headers = new Headers(init.headers);
     headers.set('Accept', 'application/json');
     const multipart = typeof FormData !== 'undefined' && init.body instanceof FormData;
     if (init.body !== undefined && !multipart) headers.set('Content-Type', 'application/json');
     for (const [key, value] of Object.entries(authHeaders(this.auth))) headers.set(key, value);
-    const response = await this.fetchImpl(endpointFor(this.baseUrl, path), { ...init, headers, signal: init.signal ?? AbortSignal.timeout(30000) });
+    const freshControlPlaneGet = isFreshControlPlaneGet(path, init.method);
+    if (freshControlPlaneGet) {
+      headers.set('Cache-Control', 'no-cache, no-store, max-age=0');
+      headers.set('Pragma', 'no-cache');
+    }
+    const endpoint = new URL(endpointFor(this.baseUrl, path));
+    if (freshControlPlaneGet) endpoint.searchParams.set('_proya_ts', `${Date.now()}-${randomUUID()}`);
+    const url = endpoint.toString();
+    const response = await this.fetchImpl(url, { ...init, ...(freshControlPlaneGet ? { cache: 'no-store' as const } : {}), headers, signal: init.signal ?? AbortSignal.timeout(30000) });
     const text = await response.text();
     let payload: unknown = {};
     if (text.trim()) {
       try { payload = JSON.parse(text) as unknown; } catch { payload = text; }
     }
-    if (!response.ok) throw new Error(`ComfyUI request ${path} failed (${response.status}): ${errorMessage(payload)}`);
-    return payload as T;
+    const receivedAt = new Date().toISOString();
+    if (!response.ok) {
+      const requestError = new Error(`ComfyUI request ${path} failed (${response.status}): ${errorMessage(payload)}`);
+      Object.assign(requestError, { status: response.status, statusText: response.statusText, payload, url, receivedAt });
+      throw requestError;
+    }
+    return { payload: payload as T, status: response.status, statusText: response.statusText, url, receivedAt };
+  }
+
+  private async requestJson<T = unknown>(path: string, init: RequestInit = {}): Promise<T> {
+    return (await this.requestJsonResponse<T>(path, init)).payload;
   }
 
   private makeState(localJobId: string | null, remotePromptId: string | null, status: ComputeJobState['status'], overrides: Partial<ComputeJobState> = {}): ComputeJobState {
@@ -1431,10 +1786,11 @@ export class RemoteComfyComputeProvider implements ComputeProvider {
     } else if (type === 'execution_error') {
       const currentNode = asString(data.node) ?? asString(data.node_id);
       const executionError = asString(data.exception_message) ?? asString(data.message) ?? 'ComfyUI reported an execution error.';
+      const gateFailure = pipelineStageForNode(currentNode) === 'VALIDATING_PROMPT' ? promptGateFailureStage(executionError) : null;
       const failureStage = pipelineStageForNode(currentNode) === 'WRITING_PROMPT'
         ? classifyH3PromptEngineError(executionError)
         : pipelineStageForNode(currentNode) === 'VALIDATING_PROMPT'
-          ? 'PROMPT_VALIDATION_FAILED'
+          ? gateFailure ?? 'PROMPT_VALIDATION_FAILED'
           : pipelineStageForNode(currentNode) === 'UNLOADING_LLM' ? 'LLM_UNLOAD_FAILED' : 'H3_GENERATION_FAILED';
       const promptEngine = this.promptEngineByPromptId.get(remotePromptId);
       publish({
@@ -1444,6 +1800,7 @@ export class RemoteComfyComputeProvider implements ComputeProvider {
         failureStage,
         error: h3PromptEngineErrorMessage(executionError, promptEngine),
         connectionError: null,
+        ...promptCleanupAudit(executionError),
         promptEngine: promptEngine ?? null,
         ...(currentNode === '152' ? { llmUnloadSucceeded: false, llmUnloadError: executionError } : {}),
         ...h3PromptEngineAudit(promptEngine)

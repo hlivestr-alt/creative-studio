@@ -1,7 +1,8 @@
 import { AutoH3Service } from './auto-h3-service';
 import type { AutoH3Config } from '../../src/domain/auto-h3';
 import { app, BrowserWindow, clipboard, dialog, ipcMain, net, protocol, screen, shell, WebContentsView } from 'electron';
-import { existsSync, mkdirSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, statSync, writeFileSync } from 'node:fs';
+import { createHash } from 'node:crypto';
 import { dirname, join, normalize, resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { HistoryDatabase, loadSqlite } from './database';
@@ -9,9 +10,10 @@ import { SettingsStore } from './settings-store';
 import { ComputeService } from './compute-service';
 import { ExplicitReferenceAuthorizationStore } from './reference-authorization';
 import { defaultSettings, getChatWorkspaceUrl } from '../../src/domain/settings';
-import type { AppSettings, ChatPanelBounds, ComfyOutputFile, H3PromptEngineSettings, H3PromptInput, H3PromptUpdate, HistoryInput, HistoryUpdate, RemoteH3GenerationRequest } from '../../src/domain/types';
+import type { AppSettings, ChatPanelBounds, ComfyOutputFile, H3PromptEngineSettings, H3PromptInput, H3PromptUpdate, H3VideoBrief, HistoryInput, HistoryUpdate, RemoteH3GenerationRequest } from '../../src/domain/types';
 import { windowChannels, windowStateFromMaximized, type WindowState } from '../../src/domain/window';
 import { calculateChatViewBounds, hiddenChatViewBounds, type LayoutRect, type WindowContentSize } from './chat-bounds';
+import { h3LifecycleSchemaVersion, type RuntimeDiagnostics } from '../../src/domain/runtime';
 
 protocol.registerSchemesAsPrivileged([{ scheme: 'proya-asset', privileges: { standard: true, secure: true, supportFetchAPI: true } }]);
 
@@ -21,6 +23,8 @@ let database: HistoryDatabase | null = null;
 let settingsStore: SettingsStore | null = null;
 let computeService: ComputeService | null = null;
 let autoH3Service: AutoH3Service | null = null;
+let runtimeDatabasePath: string | null = null;
+let runtimeStaticDiagnostics: Omit<RuntimeDiagnostics, 'databaseSchemaVersion' | 'currentAutoSessionId' | 'currentAutoJobId' | 'currentComputeJobId' | 'currentComfyPromptId'> | null = null;
 const referenceAuthorization = new ExplicitReferenceAuthorizationStore();
 let lastChatPanelBounds: ChatPanelBounds | null = null;
 const smokeOutput = process.argv.find((argument) => argument.startsWith('--smoke-test-output='))?.split('=').slice(1).join('=');
@@ -55,6 +59,44 @@ if (process.platform === 'win32') app.setAppUserModelId('com.proya.creativestudi
 function currentSettings(): AppSettings {
   if (!settingsStore) throw new Error('Settings unavailable');
   return { ...settingsStore.get(), h3SystemPromptPath };
+}
+
+function createRuntimeStaticDiagnostics(): NonNullable<typeof runtimeStaticDiagnostics> {
+  const artifactPath = app.isPackaged ? app.getAppPath() : __filename;
+  let buildTimestamp = 'unavailable';
+  let appAsarSha256 = 'unavailable';
+  try {
+    buildTimestamp = statSync(artifactPath).mtime.toISOString();
+    appAsarSha256 = createHash('sha256').update(readFileSync(artifactPath)).digest('hex');
+  } catch { /* A development app path can be a directory; keep explicit unavailable values. */ }
+  const appVersion = app.getVersion();
+  return {
+    runningExecutable: process.execPath,
+    buildTimestamp,
+    appVersion,
+    buildId: `${appVersion}-${appAsarSha256.slice(0, 12)}`,
+    appAsarPath: artifactPath,
+    appAsarSha256,
+    userDataDirectory: app.getPath('userData'),
+    activeDatabasePath: runtimeDatabasePath ?? 'unavailable',
+    lifecycleSchemaVersion: h3LifecycleSchemaVersion
+  };
+}
+
+function runtimeDiagnostics(): RuntimeDiagnostics {
+  runtimeStaticDiagnostics ??= createRuntimeStaticDiagnostics();
+  const autoSnapshot = autoH3Service?.snapshot();
+  const autoSession = autoSnapshot?.sessions.find((session) => session.status !== 'STOPPED') ?? null;
+  const autoJob = autoSnapshot?.jobs.find((job) => job.autoJobId === autoSession?.currentJobId) ?? null;
+  const computeJob = autoSession ? autoJob?.state ?? null : computeService?.listJobs(1)[0]?.state ?? null;
+  return {
+    ...runtimeStaticDiagnostics,
+    databaseSchemaVersion: database?.getSchemaVersion() ?? 0,
+    currentAutoSessionId: autoSession?.sessionId ?? null,
+    currentAutoJobId: autoJob?.autoJobId ?? autoSession?.currentJobId ?? null,
+    currentComputeJobId: computeJob?.localJobId ?? null,
+    currentComfyPromptId: computeJob?.remotePromptId ?? null
+  };
 }
 
 function isAllowedChatUrl(value: string): boolean {
@@ -130,6 +172,7 @@ async function waitForRendererSelector(selector: string): Promise<boolean> {
 }
 
 function registerIpc(): void {
+  ipcMain.handle('runtime:get-diagnostics', () => runtimeDiagnostics());
   ipcMain.handle('history:list', (_event, limit?: number) => database?.list(limit ?? 100) ?? []);
   ipcMain.handle('history:create', (_event, input: HistoryInput) => database?.create(input));
   ipcMain.handle('history:update', (_event, id: number, update: HistoryUpdate) => database?.update(id, update));
@@ -143,7 +186,8 @@ function registerIpc(): void {
   ipcMain.handle('compute:get-workflow-defaults', () => computeService?.getWorkflowDefaults());
   ipcMain.handle('auto-h3:snapshot', () => autoH3Service?.snapshot());
   ipcMain.handle('auto-h3:start', (_event, config: AutoH3Config) => autoH3Service?.start(config));
-  ipcMain.handle('auto-h3:resume', (_event, id: string) => autoH3Service?.resume(id));
+  ipcMain.handle('auto-h3:resume', (_event, id: string, brief?: H3VideoBrief) => autoH3Service?.resume(id, brief));
+  ipcMain.handle('auto-h3:update-current-brief', (_event, brief: H3VideoBrief) => { autoH3Service?.updateCurrentBrief(brief); });
   ipcMain.handle('auto-h3:stop', (_event, id: string, immediately: boolean) => autoH3Service?.stop(id, immediately));
   ipcMain.handle('auto-h3:cancel-download', (_event, id: string) => autoH3Service?.cancelDownload(id));
   ipcMain.handle('auto-h3:pick-folder', async () => {
@@ -428,9 +472,12 @@ async function createWindow(): Promise<void> {
 app.whenReady().then(async () => {
   const root = app.isPackaged ? process.resourcesPath : appRoot;
   settingsStore = new SettingsStore(join(app.getPath('userData'), 'settings.json'), defaultSettings(root));
-  database = new HistoryDatabase(join(app.getPath('userData'), 'proya-creative-studio.sqlite'), await loadSqlite());
+  runtimeDatabasePath = resolve(app.getPath('userData'), 'proya-creative-studio.sqlite');
+  database = new HistoryDatabase(runtimeDatabasePath, await loadSqlite());
   computeService = new ComputeService(currentSettings, (state) => mainWindow?.webContents.send('compute:job-state', state), !app.isPackaged, database, [join(root, 'product-assets'), join(root, 'references')], referenceAuthorization);
   autoH3Service = new AutoH3Service(database, computeService, currentSettings);
+  runtimeStaticDiagnostics = createRuntimeStaticDiagnostics();
+  console.info(`PROYA runtime provenance ${JSON.stringify(runtimeDiagnostics())}`);
   protocol.handle('proya-asset', (request) => {
     const url = new URL(request.url);
     const relative = normalize(`${url.host}${decodeURIComponent(url.pathname)}`).replace(/^[/\\]+/, '');

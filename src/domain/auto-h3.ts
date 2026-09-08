@@ -10,9 +10,18 @@ export interface AutoH3Config {
   shuffleContentTypes: boolean;
   chinaRoot: string;
   laptopRoot: string;
+  /** Initial current H3 brief; it is not persisted as Auto Run session state. */
   brief: H3VideoBrief;
 }
-export interface AutoH3Session extends AutoH3Config {
+export interface AutoH3Session {
+  selectedProducts: ProductId[];
+  selectedContentTypes: H3ContentType[];
+  shuffleProducts: boolean;
+  shuffleContentTypes: boolean;
+  chinaRoot: string;
+  laptopRoot: string;
+  /** Legacy sessions may still contain their original starting brief. */
+  brief?: H3VideoBrief;
   sessionId: string;
   status: 'RUNNING' | 'INTERRUPTED' | 'STOPPING' | 'STOPPED';
   startedAt: string;

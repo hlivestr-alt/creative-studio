@@ -92,10 +92,12 @@ describe('MiniMax H3 workflow settings boundary', () => {
     const template = JSON.parse(readFileSync(join(process.cwd(), 'workflows', 'minimax-h3-api.json'), 'utf8')) as Record<string, Record<string, Record<string, unknown>>>;
     const workflow = validateMiniMaxH3ApiWorkflowTemplate(template);
 
-    expect(workflow['151'].inputs.valid).toEqual(['150', 1]);
+    expect(workflow['152'].inputs.valid).toEqual(['150', 1]);
+    expect(workflow['151'].inputs.valid).toEqual(['152', 1]);
+    expect(workflow['151'].inputs.unload_succeeded).toEqual(['152', 3]);
     expect(workflow['151'].inputs).not.toHaveProperty('quality_valid');
-    expect(workflow['136'].inputs.prompt).toEqual(['152', 0]);
-    expect(workflow['152'].inputs.prompt).toEqual(['151', 0]);
+    expect(workflow['136'].inputs.prompt).toEqual(['151', 0]);
+    expect(workflow['152'].inputs.prompt).toEqual(['150', 0]);
   });
 
   it('exposes the pre-submit App → node → injected-value mapping', () => {
