@@ -1195,6 +1195,52 @@ def _source_requests_offscreen_voice(source_prompt: str) -> bool:
     return False
 
 
+_VOICEOVER_REFERENCE_RE = re.compile(
+    r"\b(?:off-screen\s+(?:narrator|speech|voice)|spoken\s+narration|voice[ -]?over|"
+    r"narrat(?:e|es|ed|ing|or|ors|ion)|"
+    r"voz\s+en\s+off|narraci[oó]n)\b",
+    re.IGNORECASE,
+)
+
+
+def _has_non_negated_voiceover_reference(text: str) -> bool:
+    """Return whether a clause affirmatively describes voiceover-like speech."""
+    value = str(text or "")
+    boundaries = re.compile(
+        r"[.!?;]|\b(?:but|however|except|yet|although|though|pero|sino)\b",
+        re.IGNORECASE,
+    )
+    for match in _VOICEOVER_REFERENCE_RE.finditer(value):
+        clause_start = 0
+        for boundary in boundaries.finditer(value[:match.start()]):
+            clause_start = boundary.end()
+        following_boundary = boundaries.search(value, match.end())
+        clause_end = following_boundary.start() if following_boundary else len(value)
+        prefix = value[clause_start:match.start()]
+        suffix = value[match.end():clause_end]
+
+        # "not only a voiceover" is additive, not a negation.
+        negation_prefix = re.sub(r"\bnot\s+only\b", "", prefix, flags=re.IGNORECASE)
+        if re.search(
+            r"\b(?:no|none|not|without|never|avoid(?:s|ed|ing)?|omit(?:s|ted|ting)?|"
+            r"exclude(?:s|d|ing)?|forbid(?:s|den|ding)?|prohibit(?:s|ed|ing)?|"
+            r"sin|nunca|evita|omite|excluye)\b",
+            negation_prefix,
+            flags=re.IGNORECASE,
+        ):
+            continue
+        if re.match(
+            r"\s*:?\s*(?:(?:is|are|was|were|should|must|will)\s+)?"
+            r"(?:not\s+(?:present|included|used|added|introduced|provided|audible)|"
+            r"none|absent|omitted|excluded|forbidden|prohibited)\b",
+            suffix,
+            flags=re.IGNORECASE,
+        ):
+            continue
+        return True
+    return False
+
+
 SYSTEM_PROMPT = """You rewrite basic user requests into production-ready MiniMax H3 audiovisual prompts.
 
 DIRECTION IN, DESCRIPTION OUT — THIS GOVERNS EVERY BLOCK BELOW:
@@ -7298,7 +7344,7 @@ def _validate_prompt_compiled(prompt: str, mode: str, duration_seconds: float,
         _source_requests_offscreen_voice(source_prompt)
         or any(internal for _language, _quote, internal in source_contracts)
     )
-    if (re.search(r"\b(?:off-screen voiceover|voice[ -]?over|voz en off)\b", text, re.IGNORECASE)
+    if (_has_non_negated_voiceover_reference(text)
             and (not source_requests_voiceover or voice_performance != "audible")):
         errors.append("Output invented voiceover although the source requested visible dialogue")
     if source_requests_voiceover and voice_performance == "audible" and not re.search(

@@ -33,6 +33,7 @@ from prompt_guides import (
     _dialogue_authoring_request,
     _explicit_source_fact_errors,
     _source_dialogue_contracts,
+    _has_non_negated_voiceover_reference,
     _GRADING_ONLY_PALETTE_PATTERNS,
 )
 from creative_treatments import CINEMATOGRAPHY_CHOICES
@@ -1286,6 +1287,72 @@ overall_soundscape: Room tone.
 non_diegetic_music: N/A"""
     report = validate_prompt(prompt, "t2va", 5.0, 'A detective says "Hello."')
     assert not report["valid"]
+    assert any("invented voiceover" in item for item in report["errors"])
+
+
+@pytest.mark.parametrize("phrase", [
+    "No voiceover.",
+    "No human speech or voiceover is present.",
+    "without voiceover",
+    "without introducing any voiceover or dialogue",
+    "there is no voiceover",
+    "no dialogue and no voiceover",
+    "not accompanied by voiceover",
+    "the scene contains no narration or voiceover",
+    "voiceover is not present",
+    "voiceover: none",
+    "there should be no voiceover",
+    "do not add voiceover",
+    "no spoken narration, dialogue, or voiceover",
+    "No narration is present.",
+])
+def test_negated_voiceover_and_narration_references_are_not_inventions(phrase):
+    assert not _has_non_negated_voiceover_reference(phrase)
+
+
+@pytest.mark.parametrize("phrase", [
+    "A voiceover explains the benefits.",
+    "Voiceover: this cleanser brightens your skin.",
+    "A female voiceover says the product name.",
+    "The scene includes voiceover narration.",
+    "With a warm voiceover describing the product.",
+    "Voiceover begins as the cleanser appears.",
+    "An off-screen narrator speaks.",
+    "Spoken narration explains the ingredients.",
+    "A narrator explains the product.",
+    "The presenter narrates the product benefits.",
+])
+def test_affirmative_voiceover_and_narration_references_remain_inventions(phrase):
+    assert _has_non_negated_voiceover_reference(phrase)
+
+
+@pytest.mark.parametrize("phrase", [
+    "No human speech or voiceover is present.",
+    "without introducing any voiceover or dialogue.",
+])
+def test_real_phase3c_negated_voiceover_phrases_pass_invention_validation(phrase):
+    prompt = f"""integrated_multimodal_description: [Shot 1] The cleanser remains centered. {phrase}
+
+overall_soundscape: Room tone only; {phrase}
+
+non_diegetic_music: N/A"""
+    report = validate_prompt(prompt, "t2va", 5.0, "A cleanser remains centered with room tone.")
+    assert not any("invented voiceover" in item for item in report["errors"])
+
+
+@pytest.mark.parametrize("phrase", [
+    "A voiceover explains the product.",
+    "Voiceover: this cleanser brightens your skin.",
+    "An off-screen narrator speaks.",
+    "Spoken narration explains the ingredients.",
+])
+def test_affirmative_voiceover_and_narration_fail_invention_validation(phrase):
+    prompt = f"""integrated_multimodal_description: [Shot 1] The cleanser remains centered. {phrase}
+
+overall_soundscape: {phrase}
+
+non_diegetic_music: N/A"""
+    report = validate_prompt(prompt, "t2va", 5.0, "A cleanser remains centered without speech.")
     assert any("invented voiceover" in item for item in report["errors"])
 
 

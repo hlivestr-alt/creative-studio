@@ -14,6 +14,7 @@ import type { AppSettings, ChatPanelBounds, ComfyOutputFile, H3PromptEngineSetti
 import { windowChannels, windowStateFromMaximized, type WindowState } from '../../src/domain/window';
 import { calculateChatViewBounds, hiddenChatViewBounds, type LayoutRect, type WindowContentSize } from './chat-bounds';
 import { h3LifecycleSchemaVersion, type RuntimeDiagnostics } from '../../src/domain/runtime';
+import { ChinaAutoH3ShadowController } from './china-auto-h3-controller';
 
 protocol.registerSchemesAsPrivileged([{ scheme: 'proya-asset', privileges: { standard: true, secure: true, supportFetchAPI: true } }]);
 
@@ -23,6 +24,7 @@ let database: HistoryDatabase | null = null;
 let settingsStore: SettingsStore | null = null;
 let computeService: ComputeService | null = null;
 let autoH3Service: AutoH3Service | null = null;
+let chinaShadowController: ChinaAutoH3ShadowController | null = null;
 let runtimeDatabasePath: string | null = null;
 let runtimeStaticDiagnostics: Omit<RuntimeDiagnostics, 'databaseSchemaVersion' | 'currentAutoSessionId' | 'currentAutoJobId' | 'currentComputeJobId' | 'currentComfyPromptId'> | null = null;
 const referenceAuthorization = new ExplicitReferenceAuthorizationStore();
@@ -36,6 +38,7 @@ const smokeLayouts = process.argv.includes('--smoke-test-layouts');
 const smokeRoute = process.argv.find((argument) => argument.startsWith('--smoke-test-route='))?.split('=').slice(1).join('=');
 const smokeH3 = process.argv.includes('--smoke-test-h3');
 const smokeAutoH3 = process.argv.includes('--smoke-test-auto-h3');
+const smokeReadinessHold = process.argv.includes('--smoke-test-readiness-hold');
 if (smokeOutput) {
   const profile = join(dirname(resolve(smokeOutput)), 'smoke-profile');
   mkdirSync(profile, { recursive: true });
@@ -185,6 +188,24 @@ function registerIpc(): void {
   ipcMain.handle('compute:test-prompt-engine', (_event, url: string, settings?: H3PromptEngineSettings) => computeService?.testPromptEngine(url, settings ?? currentSettings().h3PromptEngine));
   ipcMain.handle('compute:get-workflow-defaults', () => computeService?.getWorkflowDefaults());
   ipcMain.handle('auto-h3:snapshot', () => autoH3Service?.snapshot());
+  ipcMain.handle('auto-h3:stage-shadow', (_event, config: AutoH3Config, stageUpdated = false) => {
+    if (!chinaShadowController) throw new Error('China shadow controller unavailable.');
+    return chinaShadowController.stage(config, stageUpdated);
+  });
+  ipcMain.handle('auto-h3:new-shadow-session', (_event, config: AutoH3Config) => {
+    if (!chinaShadowController) throw new Error('China shadow controller unavailable.');
+    return chinaShadowController.newDraft(config);
+  });
+  ipcMain.handle('auto-h3:start-canary', (_event, sessionId: string, bundleHash: string) => chinaShadowController?.startCanary(sessionId, bundleHash));
+  ipcMain.handle('auto-h3:start-two-job-canary', (_event, sessionId: string, bundleHash: string) => chinaShadowController?.startTwoJobCanary(sessionId, bundleHash));
+  ipcMain.handle('auto-h3:start-production', (_event, config: AutoH3Config) => chinaShadowController?.startProduction(config));
+  ipcMain.handle('auto-h3:update-production-settings', (_event, sessionId: string, brief: H3VideoBrief) => chinaShadowController?.updateProductionSettings(sessionId, brief));
+  ipcMain.handle('auto-h3:canary-readiness', () => chinaShadowController?.canaryReadiness());
+  ipcMain.handle('auto-h3:canary-status', (_event, sessionId: string) => chinaShadowController?.canaryStatus(sessionId));
+  ipcMain.handle('auto-h3:stop-canary-after-current', (_event, sessionId: string) => chinaShadowController?.stopAfterCurrent(sessionId));
+  ipcMain.handle('auto-h3:stop-canary-now', (_event, sessionId: string) => chinaShadowController?.stopNow(sessionId));
+  ipcMain.handle('auto-h3:download-canary-artifact', (_event, sessionId: string, jobId: string, destinationRoot: string) => chinaShadowController?.downloadCanaryArtifact(sessionId, jobId, destinationRoot));
+  ipcMain.handle('auto-h3:sync-canary-artifacts', (_event, sessionId: string, destinationRoot: string) => chinaShadowController?.syncCanaryArtifacts(sessionId, destinationRoot));
   ipcMain.handle('auto-h3:start', (_event, config: AutoH3Config) => autoH3Service?.start(config));
   ipcMain.handle('auto-h3:resume', (_event, id: string, brief?: H3VideoBrief) => autoH3Service?.resume(id, brief));
   ipcMain.handle('auto-h3:update-current-brief', (_event, brief: H3VideoBrief) => { autoH3Service?.updateCurrentBrief(brief); });
@@ -428,14 +449,34 @@ async function createWindow(): Promise<void> {
       await waitForRendererSelector('.auto-h3-panel');
       await mainWindow.webContents.executeJavaScript(`(() => {
         const select = document.querySelector('[aria-label="H3 generation mode"]');
-        select.value = 'auto'; select.dispatchEvent(new Event('change', { bubbles: true }));
+        const setter = Object.getOwnPropertyDescriptor(HTMLSelectElement.prototype, 'value').set;
+        setter.call(select, 'auto'); select.dispatchEvent(new Event('change', { bubbles: true }));
       })()`);
-      await new Promise(resolveDelay => setTimeout(resolveDelay, 500));
+      for (let attempt = 0; attempt < 60; attempt++) {
+        const settled = await mainWindow.webContents.executeJavaScript("document.querySelector('.auto-h3-panel')?.textContent.includes('China Production Runner: READY')").catch(() => false);
+        if (settled) break;
+        await new Promise(resolveDelay => setTimeout(resolveDelay, 250));
+      }
       console.log('Auto H3 smoke: ' + await mainWindow.webContents.executeJavaScript(`JSON.stringify({
-        start: document.querySelector('.auto-h3-panel')?.textContent.includes('START AUTO GENERATION'),
+        start: document.querySelector('.auto-h3-panel')?.textContent.includes('START CHINA AUTO RUN'),
+        productionReady: document.querySelector('.auto-h3-panel')?.textContent.includes('China Production Runner: READY'),
+        staleInstallWarningPresent: document.querySelector('.auto-h3-panel')?.textContent.includes('Install and start the production China runner before starting Auto Run.'),
+        startEnabled: !Array.from(document.querySelectorAll('button')).find((button) => button.textContent?.trim() === 'START CHINA AUTO RUN')?.disabled,
         selected: document.querySelectorAll('.auto-selections input:checked').length,
         overflow: document.querySelector('.auto-h3-panel').scrollWidth > document.querySelector('.auto-h3-panel').clientWidth
       })`));
+      if (smokeReadinessHold) {
+        const samples = [];
+        for (let sample = 0; sample < 7; sample++) {
+          samples.push(await mainWindow.webContents.executeJavaScript(`(() => {
+            const panel = document.querySelector('.auto-h3-panel');
+            const start = Array.from(document.querySelectorAll('button')).find((button) => button.textContent?.trim() === 'START CHINA AUTO RUN');
+            return { atSeconds: ${sample * 5}, ready: panel?.textContent.includes('China Production Runner: READY'), temporary: panel?.textContent.includes('temporarily unavailable'), incompatible: panel?.textContent.includes('INCOMPATIBLE'), startEnabled: !start?.disabled };
+          })()`));
+          if (sample < 6) await new Promise(resolveDelay => setTimeout(resolveDelay, 5_000));
+        }
+        console.log(`Auto H3 readiness hold: ${JSON.stringify(samples)}`);
+      }
       console.log(`Auto H3 smoke active sessions: ${autoH3Service?.snapshot().sessions.length}`);
     }
 
@@ -476,6 +517,7 @@ app.whenReady().then(async () => {
   database = new HistoryDatabase(runtimeDatabasePath, await loadSqlite());
   computeService = new ComputeService(currentSettings, (state) => mainWindow?.webContents.send('compute:job-state', state), !app.isPackaged, database, [join(root, 'product-assets'), join(root, 'references')], referenceAuthorization);
   autoH3Service = new AutoH3Service(database, computeService, currentSettings);
+  chinaShadowController = new ChinaAutoH3ShadowController(database, currentSettings);
   runtimeStaticDiagnostics = createRuntimeStaticDiagnostics();
   console.info(`PROYA runtime provenance ${JSON.stringify(runtimeDiagnostics())}`);
   protocol.handle('proya-asset', (request) => {

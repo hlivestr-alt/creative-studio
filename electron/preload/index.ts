@@ -1,4 +1,4 @@
-import type { AutoH3Config, AutoH3Snapshot } from '../../src/domain/auto-h3';
+import type { AutoH3Config, AutoH3Snapshot, ChinaCanaryObserver, ChinaCanaryReadiness, ChinaShadowDraftIdentity, ChinaShadowStageReport } from '../../src/domain/auto-h3';
 import { contextBridge, ipcRenderer, webUtils } from 'electron';
 import type { AppSettings, ChatPanelBounds, ComfyOutputFile, ComputeJobState, H3PromptEngineSettings, H3PromptEngineStatus, H3PromptInput, H3PromptRecord, H3PromptUpdate, H3VideoBrief, H3WorkflowSettings, HistoryInput, HistoryRecord, HistoryUpdate, RemoteComfySystemInfo, RemoteH3GenerationRequest, RemoteH3JobRecord } from '../../src/domain/types';
 import { windowChannels, type WindowState } from '../../src/domain/window';
@@ -10,6 +10,18 @@ const api = {
   },
   autoH3: {
     snapshot: (): Promise<AutoH3Snapshot> => ipcRenderer.invoke('auto-h3:snapshot'),
+    stageShadow: (config: AutoH3Config, stageUpdated = false): Promise<ChinaShadowStageReport> => ipcRenderer.invoke('auto-h3:stage-shadow', config, stageUpdated),
+    newShadowSession: (config: AutoH3Config): Promise<ChinaShadowDraftIdentity> => ipcRenderer.invoke('auto-h3:new-shadow-session', config),
+    canaryReadiness: (): Promise<ChinaCanaryReadiness> => ipcRenderer.invoke('auto-h3:canary-readiness'),
+    startCanary: (sessionId: string, bundleHash: string): Promise<ChinaCanaryObserver> => ipcRenderer.invoke('auto-h3:start-canary', sessionId, bundleHash),
+    startTwoJobCanary: (sessionId: string, bundleHash: string): Promise<ChinaCanaryObserver> => ipcRenderer.invoke('auto-h3:start-two-job-canary', sessionId, bundleHash),
+    startChinaAutoRun: (config: AutoH3Config): Promise<ChinaCanaryObserver> => ipcRenderer.invoke('auto-h3:start-production', config),
+    updateChinaSettings: (sessionId: string, brief: H3VideoBrief): Promise<void> => ipcRenderer.invoke('auto-h3:update-production-settings', sessionId, brief),
+    canaryStatus: (sessionId: string): Promise<ChinaCanaryObserver> => ipcRenderer.invoke('auto-h3:canary-status', sessionId),
+    stopCanaryAfterCurrent: (sessionId: string): Promise<ChinaCanaryObserver> => ipcRenderer.invoke('auto-h3:stop-canary-after-current', sessionId),
+    stopCanaryNow: (sessionId: string): Promise<ChinaCanaryObserver> => ipcRenderer.invoke('auto-h3:stop-canary-now', sessionId),
+    downloadCanaryArtifact: (sessionId: string, jobId: string, destinationRoot: string): Promise<{ path: string; size: number; sha256: string }> => ipcRenderer.invoke('auto-h3:download-canary-artifact', sessionId, jobId, destinationRoot),
+    syncCanaryArtifacts: (sessionId: string, destinationRoot: string): Promise<Array<{ jobId: string; path: string; size: number; sha256: string; downloaded: boolean }>> => ipcRenderer.invoke('auto-h3:sync-canary-artifacts', sessionId, destinationRoot),
     start: (config: AutoH3Config): Promise<AutoH3Snapshot> => ipcRenderer.invoke('auto-h3:start', config),
     resume: (id: string, brief?: H3VideoBrief): Promise<AutoH3Snapshot> => ipcRenderer.invoke('auto-h3:resume', id, brief),
     updateCurrentBrief: (brief: H3VideoBrief): Promise<void> => ipcRenderer.invoke('auto-h3:update-current-brief', brief),

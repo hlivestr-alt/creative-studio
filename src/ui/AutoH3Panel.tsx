@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { defaultChinaRoot, defaultLaptopRoot, type AutoH3Snapshot } from '../domain/auto-h3';
+import { defaultChinaRoot, defaultLaptopRoot, type AutoH3Snapshot, type ChinaCanaryObserver, type ChinaCanaryReadiness, type ChinaShadowDraftIdentity, type ChinaShadowStageReport } from '../domain/auto-h3';
 import { products } from '../domain/data';
 import { h3ContentTypeOptions } from '../domain/h3';
 import type { H3VideoBrief } from '../domain/types';
@@ -15,6 +15,37 @@ export function autoH3CurrentStage(active: boolean, sessionError: string | null,
   if (job?.state?.h3LifecycleDiagnostics?.remoteLifecycleState === 'ORPHANED_REMOTE_PROMPT') return 'RECONCILING LOST REMOTE JOB';
   if (job?.state?.pipelineStage === 'RELEASING_H3_VRAM' && (job.state.h3LifecycleDiagnostics?.outputCaptured || job.state.h3LifecycleDiagnostics?.chinaArchived)) return 'RELEASING H3 VRAM';
   return job?.state?.pipelineStage ?? 'PREPARING';
+}
+
+export function autoH3ReconnectSessionId(readiness: ChinaCanaryReadiness | null, observer: ChinaCanaryObserver | null): string | null {
+  const session = readiness?.session;
+  if (!session || session.status === 'STAGED' || observer?.sessionId === session.sessionId) return null;
+  return session.sessionId;
+}
+
+export function chinaProductionRunnerReady(readiness: ChinaCanaryReadiness | null): boolean {
+  return readiness?.runner.mode === 'production'
+    && readiness.runner.generationEnabled === true
+    && readiness.runner.maxJobsPerSession === null
+    && readiness.healthReady === true;
+}
+
+export type ChinaProductionReadinessStatus = 'CHECKING' | 'READY' | 'TEMPORARILY_UNREACHABLE' | 'INCOMPATIBLE';
+
+export function chinaProductionReadinessAfterSuccess(readiness: ChinaCanaryReadiness): ChinaProductionReadinessStatus {
+  return chinaProductionRunnerReady(readiness) ? 'READY' : 'INCOMPATIBLE';
+}
+
+export function chinaProductionReadinessAfterFailure(): ChinaProductionReadinessStatus {
+  return 'TEMPORARILY_UNREACHABLE';
+}
+
+export function chinaProductionReadinessAfterStartFailure(reason: unknown): ChinaProductionReadinessStatus {
+  return String(reason).includes('INCOMPATIBLE_PRODUCTION_RUNNER') ? 'INCOMPATIBLE' : 'TEMPORARILY_UNREACHABLE';
+}
+
+export function chinaProductionReadinessRetryMs(status: ChinaProductionReadinessStatus, consecutiveFailures = 1): number {
+  return status === 'TEMPORARILY_UNREACHABLE' && consecutiveFailures === 1 ? 2_000 : 5_000;
 }
 
 function OrderedSelection<T extends string>({ title, values, selected, labels, onChange, disabled }: { title: string; values: readonly T[]; selected: T[]; labels?: Record<string, string>; onChange: (values: T[]) => void; disabled: boolean }) {
@@ -43,6 +74,15 @@ export function AutoH3Panel({ brief, onActive }: { brief: H3VideoBrief; onActive
   const [shuffleContentTypes, setShuffleContentTypes] = useState(false);
   const [error, setError] = useState('');
   const [busy, setBusy] = useState(false);
+  const [shadowReport, setShadowReport] = useState<ChinaShadowStageReport | null>(null);
+  const [shadowDraft, setShadowDraft] = useState<ChinaShadowDraftIdentity | null>(null);
+  const [canaryReadiness, setCanaryReadiness] = useState<ChinaCanaryReadiness | null>(null);
+  const [readinessError, setReadinessError] = useState('');
+  const [readinessStatus, setReadinessStatus] = useState<ChinaProductionReadinessStatus>('CHECKING');
+  const [startPreflighting, setStartPreflighting] = useState(false);
+  const [canary, setCanary] = useState<ChinaCanaryObserver | null>(null);
+  const [canaryDownload, setCanaryDownload] = useState('');
+  const [lastArtifactSyncRevision, setLastArtifactSyncRevision] = useState(0);
   const [filter, setFilter] = useState({ session: '', product: '', content: '', date: '', status: '' });
   const active = snapshot.sessions.find(s => s.status !== 'STOPPED');
   const session = active ?? snapshot.sessions[0];
@@ -58,14 +98,126 @@ export function AutoH3Panel({ brief, onActive }: { brief: H3VideoBrief; onActive
     void refresh(); const timer = window.setInterval(() => void refresh(), 1000);
     return () => { alive = false; window.clearInterval(timer); };
   }, []);
+  useEffect(() => {
+    const sessionId = autoH3ReconnectSessionId(canaryReadiness, canary);
+    if (!sessionId) return;
+    let alive = true;
+    void window.proya.autoH3.canaryStatus(sessionId).then(value => { if (alive) setCanary(value); }).catch(reason => { if (alive) setError(String(reason)); });
+    return () => { alive = false; };
+  }, [canaryReadiness, canary]);
+  useEffect(() => {
+    if (!canary?.sessionId
+      || canary.connection !== 'connected'
+      || canary.revision <= lastArtifactSyncRevision
+      || !canary.jobs.some(job => job.phase === 'COMPLETED')) return;
+    void window.proya.autoH3.syncCanaryArtifacts(canary.sessionId, laptopRoot).then(results => {
+      setLastArtifactSyncRevision(canary.revision);
+      if (results.length) setCanaryDownload(results.map(result => `${result.path} (${result.size} bytes, SHA-256 verified${result.downloaded ? '' : ', already present'})`).join('\n'));
+    }).catch(reason => setError(`Artifact sync failed; China jobs remain authoritative: ${String(reason)}`));
+  }, [canary, laptopRoot, lastArtifactSyncRevision]);
   useEffect(() => { onActive(Boolean(active)); }, [active, onActive]);
   useEffect(() => {
     if (!activeSessionId || activeStatus === 'INTERRUPTED') return;
     void window.proya.autoH3.updateCurrentBrief(brief).catch(() => undefined);
   }, [activeSessionId, activeStatus, brief]);
+  useEffect(() => {
+    if (!canary?.sessionId || ['CANARY_FINISHED', 'TWO_JOB_CANARY_FINISHED', 'STOPPED', 'FAILED'].includes(canary.sessionStatus)) return;
+    const timer = window.setInterval(() => { void window.proya.autoH3.canaryStatus(canary.sessionId).then(value => setCanary(previous => value.connection === 'disconnected' && previous ? { ...previous, connection: 'disconnected', message: value.message, lastAuthoritativeUpdate: previous.lastAuthoritativeUpdate } : value)); }, 2000);
+    return () => window.clearInterval(timer);
+  }, [canary?.sessionId, canary?.sessionStatus]);
+  useEffect(() => {
+    if (!canary?.sessionId || !['PRODUCTION_STARTING', 'PRODUCTION_RUNNING', 'STOPPING'].includes(canary.sessionStatus)) return;
+    const timer = window.setTimeout(() => { void window.proya.autoH3.updateChinaSettings(canary.sessionId, brief).catch(reason => setError(`Settings update was not committed to China: ${String(reason)}`)); }, 500);
+    return () => window.clearTimeout(timer);
+  }, [brief, canary?.sessionId, canary?.sessionStatus]);
+  useEffect(() => {
+    let alive = true;
+    let timer: number | null = null;
+    let consecutiveFailures = 0;
+    const refresh = async () => {
+      let nextStatus: ChinaProductionReadinessStatus;
+      try {
+        const value = await window.proya.autoH3.canaryReadiness();
+        if (!alive) return;
+        setCanaryReadiness(value); setReadinessError('');
+        consecutiveFailures = 0; nextStatus = chinaProductionReadinessAfterSuccess(value); setReadinessStatus(nextStatus);
+      } catch (reason) {
+        if (!alive) return;
+        consecutiveFailures++; setReadinessError(String(reason)); nextStatus = chinaProductionReadinessAfterFailure(); setReadinessStatus(nextStatus);
+      }
+      timer = window.setTimeout(() => void refresh(), chinaProductionReadinessRetryMs(nextStatus, consecutiveFailures));
+    };
+    void refresh();
+    return () => { alive = false; if (timer !== null) window.clearTimeout(timer); };
+  }, []);
   const run = async (action: () => Promise<AutoH3Snapshot>) => {
     setBusy(true); setError('');
     try { setSnapshot(await action()); } catch (reason) { setError(String(reason)); } finally { setBusy(false); }
+  };
+  const shadowConfig = () => ({ selectedProducts, selectedContentTypes, shuffleProducts, shuffleContentTypes, chinaRoot, laptopRoot, brief });
+  const stageShadow = async (stageUpdated = false) => {
+    setBusy(true); setError(''); setShadowReport(null);
+    try { setShadowReport(await window.proya.autoH3.stageShadow(shadowConfig(), stageUpdated)); setShadowDraft(null); setCanaryReadiness(await window.proya.autoH3.canaryReadiness()); }
+    catch (reason) { setError(String(reason)); }
+    finally { setBusy(false); }
+  };
+  const newShadowSession = async () => {
+    setBusy(true); setError(''); setShadowReport(null);
+    try { setShadowDraft(await window.proya.autoH3.newShadowSession(shadowConfig())); }
+    catch (reason) { setError(String(reason)); }
+    finally { setBusy(false); }
+  };
+  const startCanary = async () => {
+    const identity = canaryReadiness?.session ?? (shadowReport ? { sessionId: shadowReport.bundleId, bundleHash: shadowReport.bundleSha256 } : null);
+    if (!identity) return;
+    setBusy(true); setError('');
+    try { setCanary(await window.proya.autoH3.startCanary(identity.sessionId, identity.bundleHash)); }
+    catch (reason) { setError(String(reason)); }
+    finally { setBusy(false); }
+  };
+  const startTwoJobCanary = async () => {
+    const identity = canaryReadiness?.session ?? (shadowReport ? { sessionId: shadowReport.bundleId, bundleHash: shadowReport.bundleSha256 } : null);
+    if (!identity) return;
+    setBusy(true); setError('');
+    try { setCanary(await window.proya.autoH3.startTwoJobCanary(identity.sessionId, identity.bundleHash)); }
+    catch (reason) { setError(String(reason)); }
+    finally { setBusy(false); }
+  };
+  const startProduction = async () => {
+    setBusy(true); setStartPreflighting(true); setError('');
+    try { setCanary(await window.proya.autoH3.startChinaAutoRun(shadowConfig())); }
+    catch (reason) { setReadinessStatus(chinaProductionReadinessAfterStartFailure(reason)); setReadinessError(String(reason)); setError(String(reason)); }
+    finally { setStartPreflighting(false); setBusy(false); }
+  };
+  const canaryButtonVisible = canaryReadiness?.runner.mode === 'canary'
+    && canaryReadiness.runner.generationEnabled === true
+    && canaryReadiness.runner.canaryStartEnabled === true
+    && canaryReadiness.runner.maxJobsPerSession === 1
+    && canaryReadiness.proxyStartEndpointAvailable === true
+    && canaryReadiness.stagedReady === true
+    && canaryReadiness.session?.status === 'STAGED';
+  const twoJobCanaryButtonVisible = canaryReadiness?.runner.mode === 'two-job-canary'
+    && canaryReadiness.runner.generationEnabled === true
+    && canaryReadiness.runner.canaryStartEnabled === true
+    && canaryReadiness.runner.maxJobsPerSession === 2
+    && canaryReadiness.proxyStartEndpointAvailable === true
+    && canaryReadiness.healthReady === true
+    && canaryReadiness.stagedReady === true
+    && canaryReadiness.session?.status === 'STAGED'
+    && canaryReadiness.session.plannedJobs.length === 2;
+  const stopCanary = async (immediately: boolean) => {
+    if (!canary?.sessionId) return;
+    setBusy(true); setError('');
+    try { setCanary(await (immediately ? window.proya.autoH3.stopCanaryNow(canary.sessionId) : window.proya.autoH3.stopCanaryAfterCurrent(canary.sessionId))); }
+    catch (reason) { setError(String(reason)); }
+    finally { setBusy(false); }
+  };
+  const downloadCanary = async () => {
+    if (!canary?.jobId) return;
+    setBusy(true); setError('');
+    try { const result = await window.proya.autoH3.downloadCanaryArtifact(canary.sessionId, canary.jobId, laptopRoot); setCanaryDownload(`${result.path} (${result.size} bytes, SHA-256 verified)`); }
+    catch (reason) { setError(`Artifact download failed; China job remains authoritative: ${String(reason)}`); }
+    finally { setBusy(false); }
   };
   const jobs = snapshot.jobs.filter(j => (!filter.session || j.sessionId === filter.session) && (!filter.product || j.product === filter.product) && (!filter.content || j.contentType === filter.content) && (!filter.date || j.createdAt.startsWith(filter.date)) && (!filter.status || j.status === filter.status || j.downloadStatus === filter.status));
   return <section className="h3-section auto-h3-panel">
@@ -82,7 +234,75 @@ export function AutoH3Panel({ brief, onActive }: { brief: H3VideoBrief; onActive
         <small>Must match PROYA_H3_ARCHIVE_ROOT on the China PC. Default: D:\AI Videos.</small>
         <label className="h3-field">Laptop Output Root<input value={laptopRoot} onChange={e => setLaptopRoot(e.target.value)} /></label>
         <button type="button" onClick={() => { void window.proya.autoH3.pickFolder().then(path => { if (path) setLaptopRoot(path); }); }}>Choose folder…</button>
-        <button className="h3-generate-button" type="button" disabled={busy || !selectedProducts.length || !selectedContentTypes.length} onClick={() => void run(() => window.proya.autoH3.start({ selectedProducts, selectedContentTypes, shuffleProducts, shuffleContentTypes, chinaRoot, laptopRoot, brief }))}>START AUTO GENERATION</button>
+        <p className="h3-help">{startPreflighting ? 'Connecting to China production runner...' : readinessStatus === 'READY' ? 'China Production Runner: READY' : readinessStatus === 'TEMPORARILY_UNREACHABLE' ? 'China connection temporarily unavailable — retrying' : readinessStatus === 'INCOMPATIBLE' ? 'China Production Runner: INCOMPATIBLE' : 'Checking China Production Runner…'}</p>
+        <button className="h3-generate-button" type="button" disabled={busy || !selectedProducts.length || !selectedContentTypes.length || readinessStatus === 'INCOMPATIBLE'} onClick={() => void startProduction()}>START CHINA AUTO RUN</button>
+        {readinessStatus === 'INCOMPATIBLE' && <p className="h3-help">The live runner does not advertise the required production mode, generation capability, unlimited scheduler, and healthy state.</p>}
+        {readinessStatus === 'TEMPORARILY_UNREACHABLE' && readinessError && <p className="h3-help">{readinessError}</p>}
+        {canary && <div className="auto-status" aria-live="polite">
+          <h3>AUTO RUN — {canary.sessionStatus}</h3>
+          <dl>
+            <dt>China</dt><dd>{canary.connection === 'connected' ? 'Connected' : 'Remote Disconnected'}</dd>
+            <dt>Run</dt><dd>{['STOPPED', 'FAILED'].includes(canary.sessionStatus) ? 'Stopped' : 'Running'}</dd>
+            <dt>Current Product</dt><dd>{canary.currentProduct ?? '—'}</dd><dt>Current Content Type</dt><dd>{canary.currentContentType ?? '—'}</dd>
+            <dt>Current Job</dt><dd>{canary.jobId ?? 'Preparing on China'}</dd><dt>Current Phase</dt><dd>{canary.jobPhase ?? 'PREPARING'}</dd>
+            <dt>Completed</dt><dd>{canary.completedCount}</dd><dt>Failed</dt><dd>{canary.failedCount}</dd><dt>Current Cycle</dt><dd>{canary.currentCycle}</dd>
+            <dt>Last Archive</dt><dd>{canary.archivePath ?? '—'}</dd><dt>VRAM Ready</dt><dd>{canary.vramVerified ? 'YES' : 'PENDING / NOT REQUIRED'}</dd>
+          </dl>
+          {canary.message && <p>{canary.message}</p>}
+          {['PRODUCTION_STARTING', 'PRODUCTION_RUNNING', 'STOPPING'].includes(canary.sessionStatus) && <p><button type="button" disabled={busy} onClick={() => void stopCanary(false)}>STOP AFTER CURRENT</button> <button type="button" disabled={busy} onClick={() => void stopCanary(true)}>STOP NOW</button></p>}
+        </div>}
+        <details className="auto-advanced"><summary>Advanced / development</summary>
+          <h4>Legacy laptop-owned Auto Generation</h4>
+          <p>Rollback/development only. This path is not used by START CHINA AUTO RUN.</p>
+          <button type="button" disabled={busy || !selectedProducts.length || !selectedContentTypes.length} onClick={() => void run(() => window.proya.autoH3.start({ selectedProducts, selectedContentTypes, shuffleProducts, shuffleContentTypes, chinaRoot, laptopRoot, brief }))}>Legacy Start Auto Generation</button>
+          <h4>Phase 3A — staging</h4>
+          <p>Phase 3A staging transfers configuration and verified masters only. It never starts generation.</p>
+          <button type="button" disabled={busy || !selectedProducts.length || !selectedContentTypes.length} onClick={() => void stageShadow()}>Stage Session to China (Shadow)</button>
+          <button type="button" disabled={busy || !selectedProducts.length || !selectedContentTypes.length} onClick={() => void stageShadow(true)}>Stage Updated Session</button>
+          <button type="button" disabled={busy || !selectedProducts.length || !selectedContentTypes.length} onClick={() => void newShadowSession()}>New Session</button>
+          {shadowDraft && <p>New local draft prepared: {shadowDraft.sessionId}<br />Bundle SHA-256: {shadowDraft.bundleSha256}<br />State: {shadowDraft.stagingState}</p>}
+          <h4>Phase 3B — 1-job autonomous canary</h4>
+          <p>This control starts only the China-owned canary runner. It does not use laptop Auto Generation.</p>
+          {canaryButtonVisible && canaryReadiness?.session && <div className="auto-status">
+            <dl><dt>Session</dt><dd>{canaryReadiness.session.sessionId}</dd><dt>Runner</dt><dd>CANARY</dd><dt>Maximum jobs</dt><dd>{canaryReadiness.runner.maxJobsPerSession}</dd></dl>
+            <button type="button" disabled={busy || canary?.sessionStatus === 'CANARY_RUNNING' || canary?.sessionStatus === 'CANARY_STARTING'} onClick={() => void startCanary()}>Start 1-Job China Canary</button>
+          </div>}
+          <h4>Phase 3C — 2-job autonomous canary</h4>
+          <p>One Start acknowledgement transfers both job lifecycle decisions to the China runner. Laptop or Cloudflare visibility is not required between jobs.</p>
+          {twoJobCanaryButtonVisible && canaryReadiness?.session && <div className="auto-status">
+            <dl>
+              <dt>Session</dt><dd>{canaryReadiness.session.sessionId}</dd>
+              <dt>Runner mode</dt><dd>TWO-JOB-CANARY</dd>
+              <dt>Maximum jobs</dt><dd>2</dd>
+              <dt>Planned Job 1</dt><dd>{canaryReadiness.session.plannedJobs[0].product} / {canaryReadiness.session.plannedJobs[0].contentType}</dd>
+              <dt>Planned Job 2</dt><dd>{canaryReadiness.session.plannedJobs[1].product} / {canaryReadiness.session.plannedJobs[1].contentType}</dd>
+            </dl>
+            <button type="button" disabled={busy} onClick={() => void startTwoJobCanary()}>Start 2-Job China Canary</button>
+          </div>}
+          {canary && <dl>
+            <dt>Canary connection</dt><dd>{canary.connection === 'connected' ? 'CONNECTED' : 'REMOTE DISCONNECTED'}</dd>
+            <dt>China session</dt><dd>{canary.sessionId}</dd><dt>Authoritative session status</dt><dd>{canary.sessionStatus}</dd>
+            <dt>Job</dt><dd>{canary.jobId ?? 'Preparing locally on China'}</dd><dt>Job phase</dt><dd>{canary.jobPhase ?? '—'}</dd>
+            <dt>Prompt ID</dt><dd>{canary.promptId ?? '—'}</dd><dt>Archive</dt><dd>{canary.archivePath ?? '—'}</dd>
+            <dt>Archive SHA-256</dt><dd>{canary.archiveSha256 ?? '—'}</dd><dt>Local VRAM verified</dt><dd>{canary.vramVerified ? 'YES' : 'NO'}</dd>
+            <dt>Completed / Failed</dt><dd>{canary.completedCount} / {canary.failedCount}</dd><dt>Runner revision</dt><dd>{canary.revision}</dd>
+            <dt>Last authoritative update</dt><dd>{canary.lastAuthoritativeUpdate ?? '—'}</dd>
+          </dl>}
+          {canary?.jobs.map((job, index) => <dl key={job.jobId}><dt>Job {index + 1}</dt><dd>{job.product} / {job.contentType}</dd><dt>Phase</dt><dd>{job.phase}</dd><dt>Prompt ID</dt><dd>{job.promptId ?? '—'}</dd><dt>Archive</dt><dd>{job.archivePath ?? '—'}</dd><dt>VRAM verified</dt><dd>{job.vramVerified ? 'YES' : 'NO'}</dd></dl>)}
+          {canary?.message && <p>{canary.message}</p>}
+          {canary && ['CANARY_STARTING', 'CANARY_RUNNING', 'TWO_JOB_CANARY_STARTING', 'TWO_JOB_CANARY_RUNNING', 'STOPPING'].includes(canary.sessionStatus) && <p><button type="button" disabled={busy} onClick={() => void stopCanary(false)}>Stop After Current</button> <button type="button" disabled={busy} onClick={() => void stopCanary(true)}>Stop Now</button></p>}
+          {canary?.jobPhase === 'COMPLETED' && <button type="button" disabled={busy} onClick={() => void downloadCanary()}>Download Verified China Canary MP4</button>}
+          {canaryDownload && <p>Laptop copy: {canaryDownload}</p>}
+          {shadowReport && <dl>
+            <dt>Runner connection</dt><dd>{shadowReport.runnerConnection}</dd><dt>Runner version</dt><dd>{shadowReport.runnerVersion}</dd>
+            <dt>Bundle ID</dt><dd>{shadowReport.bundleId}</dd><dt>Bundle SHA-256</dt><dd>{shadowReport.bundleSha256}</dd>
+            <dt>Selected products</dt><dd>{shadowReport.selectedProducts.join(', ')}</dd><dt>Selected content types</dt><dd>{shadowReport.selectedContentTypes.join(', ')}</dd>
+            <dt>Settings version</dt><dd>{shadowReport.settingsVersion}</dd><dt>Assets staged / expected</dt><dd>{shadowReport.assetsStaged} / {shadowReport.assetsExpected}</dd>
+            <dt>Workflow hash</dt><dd>{shadowReport.workflowSha256}</dd><dt>System prompt hash</dt><dd>{shadowReport.systemPromptSha256}</dd>
+            <dt>Archive readiness</dt><dd>{shadowReport.archiveReady ? 'READY' : 'NOT READY'}</dd><dt>Comfy readiness</dt><dd>{shadowReport.comfyReady ? 'READY' : 'NOT READY'}</dd>
+            <dt>Qwen readiness</dt><dd>{shadowReport.qwenReady ? 'READY' : 'NOT READY'}</dd><dt>Stage status</dt><dd>{shadowReport.stageStatus}</dd>
+          </dl>}
+        </details>
       </>}
       {session && <div className="auto-status" aria-live="polite">
         <h3>{session.status === 'INTERRUPTED' ? 'Previous Auto Run interrupted' : `AUTO GENERATION — ${session.status}`}</h3>

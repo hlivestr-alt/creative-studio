@@ -27,9 +27,19 @@ function clean(value: string | null | undefined, fallback: string): string {
   return normalized || fallback;
 }
 
+function withoutSpeechDirection(value: string): string {
+  return value
+    .replace(/\bmid-thought\b/gi, 'mid-action')
+    .replace(/\bspoken gesture\b/gi, 'visible gesture')
+    .replace(/\b(?:creator speech|creator voice|voice[ -]?over|narration|narrator|spoken|speech|dialogue|instructional voice|explanatory voice)\b/gi, 'instrumental cue')
+    .replace(/\b(?:speaks?|talks?)\b/gi, 'gestures')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
 function directionFromGenome(brief: H3VideoBrief, genome: CreativeGenome | null | undefined): H3CreativeDirection {
   const fallback = clean(brief.videoIdea, 'A controlled cinematic product reveal.');
-  return {
+  const direction = {
     concept: fallback,
     visualHook: clean(genome?.visualHook, 'A tactile opening detail that resolves to the product.'),
     creativeArchetype: clean(genome?.creativeArchetype, 'Cinematic product reveal'),
@@ -47,6 +57,8 @@ function directionFromGenome(brief: H3VideoBrief, genome: CreativeGenome | null 
     endingDevice: clean(genome?.endingDevice, clean(brief.customEnding, brief.ending)),
     audioCharacter: clean(genome?.audioCharacter, clean(brief.sound, 'Premium, restrained sound design.'))
   };
+  if (!brief.musicOnly) return direction;
+  return Object.fromEntries(Object.entries(direction).map(([key, value]) => [key, withoutSpeechDirection(value)])) as unknown as H3CreativeDirection;
 }
 
 function conceptExposesSurface(brief: H3VideoBrief, genome: CreativeGenome | null | undefined, surface: 'rear' | 'side'): boolean {

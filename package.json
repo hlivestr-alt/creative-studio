@@ -10,6 +10,8 @@
     "dev": "concurrently -k \"vite\" \"wait-on tcp:5173 && cross-env VITE_DEV_SERVER_URL=http://localhost:5173 electron .\"",
     "build:icons": "electron scripts/render-icons.cjs",
     "build:app": "npm run build:icons && vite build && tsup",
+    "build:china-runner": "tsup --config tsup.china-runner.config.ts",
+    "package:china-runner": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/build-china-runner-package.ps1",
     "build": "npm run typecheck && npm run build:app && electron-builder --dir",
     "dist": "npm run typecheck && npm run build:app && electron-builder --win nsis",
     "typecheck": "tsc --noEmit",
@@ -65,7 +67,7 @@
     "win": {
       "target": "nsis",
       "icon": "assets/app-icon.ico",
-      "artifactName": "PROYA-Creative-Studio-${version}-Setup.${ext}"
+      "artifactName": "PROYA-Creative-Studio-ChinaAutoRun-Production-20260910-r10.3.${ext}"
     },
     "nsis": {
       "oneClick": false,

@@ -105,6 +105,39 @@ describe('H3GenerationBrief', () => {
     ]));
   });
 
+  it('removes speech-bearing Creative Diversity directions when Music Only is authoritative', () => {
+    const generationBrief = buildH3GenerationBrief({
+      product,
+      brief,
+      genome: {
+        schemaVersion: 1,
+        contentFamily: 'UGC Content',
+        creativeArchetype: 'Creator Bathroom Check-In',
+        visualHook: 'a creator speaks while holding the product',
+        environment: 'bright bathroom',
+        composition: 'handheld selfie frame',
+        cameraPath: 'one deliberate reframe',
+        framing: 'medium to close',
+        lightingStyle: 'soft window light',
+        primaryMotion: 'creator talks then raises the product',
+        secondaryMotion: 'small towel movement',
+        materialEffect: 'ceramic and glass',
+        pacing: 'conversational and quick',
+        openingDevice: 'creator enters mid-thought',
+        transitionLanguage: 'spoken gesture leads to the close-up',
+        endingDevice: 'product hold',
+        audioCharacter: 'natural room tone with light creator speech'
+      }
+    });
+    const serialized = serializeH3GenerationBrief(generationBrief);
+    const creativeDirection = serialized.split('CREATIVE DIRECTION\n')[1].split('\n\nREFERENCE MAP')[0];
+
+    expect(creativeDirection).not.toMatch(/\b(?:mid-thought|spoken|speech|dialogue|voiceover|voice-over|narration|speaks?|talks?)\b/i);
+    expect(serialized).toContain('creator enters mid-action');
+    expect(serialized).toContain('visible gesture leads to the close-up');
+    expect(serialized).toContain('No dialogue, voiceover, narration, creator speech, or other human speech.');
+  });
+
   it('builds a separate reference context and does not dump the full product record', () => {
     const generationBrief = buildH3GenerationBrief({ product, brief });
     const context = buildH3ReferenceContext(generationBrief);

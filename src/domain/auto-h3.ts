@@ -70,6 +70,97 @@ export interface AutoH3Job {
 }
 export interface AutoH3Snapshot { sessions: AutoH3Session[]; jobs: AutoH3Job[] }
 
+export interface ChinaAutoSessionMirror {
+  sessionId: string;
+  lastKnownRevision: number;
+  bundleHash: string;
+  runnerVersion: string;
+  connectionState: 'connected' | 'disconnected';
+  lastSuccessfulSync: string | null;
+  settingsVersionIdentity: string;
+  stagingState: 'DRAFT' | 'STAGING' | 'STAGING_DISCONNECTED' | 'STAGED_READY';
+  createdTimestamp: string;
+}
+
+export interface ChinaShadowDraftIdentity {
+  sessionId: string;
+  bundleSha256: string;
+  settingsVersionIdentity: string;
+  stagingState: ChinaAutoSessionMirror['stagingState'];
+  createdTimestamp: string;
+}
+
+export interface ChinaShadowStageReport {
+  runnerConnection: 'connected';
+  runnerVersion: string;
+  bundleId: string;
+  bundleSha256: string;
+  selectedProducts: ProductId[];
+  selectedContentTypes: H3ContentType[];
+  settingsVersion: number;
+  assetsStaged: number;
+  assetsExpected: number;
+  workflowSha256: string;
+  systemPromptSha256: string;
+  archiveReady: boolean;
+  comfyReady: boolean;
+  qwenReady: boolean;
+  stageStatus: 'STAGED / READY';
+  canaryStartEnabled: boolean;
+}
+
+export interface ChinaCanaryObserver {
+  connection: 'connected' | 'disconnected';
+  sessionId: string;
+  sessionStatus: string;
+  revision: number;
+  jobId: string | null;
+  jobPhase: string | null;
+  promptId: string | null;
+  archivePath: string | null;
+  archiveSha256: string | null;
+  vramVerified: boolean;
+  lastAuthoritativeUpdate: string | null;
+  completedCount: number;
+  failedCount: number;
+  currentProduct: ProductId | null;
+  currentContentType: H3ContentType | null;
+  currentCycle: number;
+  settingsVersion: number;
+  jobs: Array<{
+    jobId: string;
+    product: ProductId;
+    contentType: H3ContentType;
+    phase: string;
+    promptId: string | null;
+    archivePath: string | null;
+    archiveSha256: string | null;
+    vramVerified: boolean;
+    revision: number;
+  }>;
+  message?: string;
+}
+
+export interface ChinaCanaryReadiness {
+  runner: {
+    runnerVersion: string;
+    mode: 'shadow' | 'canary' | 'two-job-canary' | 'production';
+    generationEnabled: boolean;
+    promptSubmissionEnabled: boolean;
+    canaryStartEnabled: boolean;
+    maxJobsPerSession: number | null;
+  };
+  proxyStartEndpointAvailable: boolean;
+  healthReady: boolean;
+  session: {
+    sessionId: string;
+    bundleHash: string;
+    status: string;
+    plannedJobs: Array<{ product: ProductId; contentType: H3ContentType }>;
+  } | null;
+  stagedReady: boolean;
+}
+
 export function shuffled<T>(values: readonly T[], random: () => number): T[] {
   const result = [...values];
   for (let i = result.length - 1; i > 0; i--) {
