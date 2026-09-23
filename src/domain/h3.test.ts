@@ -111,7 +111,7 @@ describe('MiniMax H3 helpers', () => {
   it('calculates the nearest valid 17k+5 frame length', () => {
     expect(calculateH3FrameLength(4)).toBe(107);
     expect(calculateH3FrameLength(5)).toBe(124);
-    expect(calculateH3FrameLength(15)).toBe(362);
+    expect(calculateH3FrameLength(15)).toBe(345);
   });
 
   it('enforces the supported duration boundaries', () => {
@@ -359,7 +359,7 @@ describe('MiniMax H3 helpers', () => {
     const prompt = buildH3PlanningPackage({ product, brief: current, concept: null, resolvedMode: resolved, timeline });
     expect(prompt).toContain('h3_workflow: FL2VA');
     expect(prompt).toContain('system_instruction:');
-    expect(prompt).toContain('frame_length: 362 H3 frames');
+    expect(prompt).toContain('frame_length: 345 H3 frames');
     expect(prompt).toContain('integrated_multimodal_description:');
     expect(prompt).toContain('<Picture 1>: exact first-frame image');
     expect(prompt).toContain('<Picture 2>: exact final-frame image');
@@ -401,7 +401,7 @@ describe('MiniMax H3 helpers', () => {
     const request = buildH3ChatGPTRequest({ product, brief: current });
     const settings = buildH3RecommendedSettings(current);
     expect(settings.mode).toBe('FL2VA');
-    expect(settings.frames).toBe(362);
+    expect(settings.frames).toBe(345);
     expect(request).toContain('MiniMax H3 Video Creative Director and Prompt Writer');
     expect(request).toContain('Content type: Product Transformation');
     expect(request).toContain('Product reference lock:');
@@ -893,3 +893,4 @@ describe('MiniMax H3 helpers', () => {
     expect(request).toContain('local file: C:\\References\\serum.webp');
   });
 });
+

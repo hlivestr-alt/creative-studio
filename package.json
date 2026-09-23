@@ -10,13 +10,14 @@
     "dev": "concurrently -k \"vite\" \"wait-on tcp:5173 && cross-env VITE_DEV_SERVER_URL=http://localhost:5173 electron .\"",
     "build:icons": "electron scripts/render-icons.cjs",
     "build:app": "npm run build:icons && vite build && tsup",
-    "build:china-runner": "tsup --config tsup.china-runner.config.ts",
-    "package:china-runner": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/build-china-runner-package.ps1",
-    "build": "npm run typecheck && npm run build:app && electron-builder --dir",
-    "dist": "npm run typecheck && npm run build:app && electron-builder --win nsis",
+    "build:portable": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/build-portable.ps1",
+    "build:local-runner": "tsup --config tsup.local-runner.config.ts",
+    "build": "npm run build:portable",
+    "dist": "npm run build:portable",
     "typecheck": "tsc --noEmit",
     "lint": "eslint . --max-warnings=0",
     "test": "vitest run",
+    "validate": "npm run lint && npm test",
     "test:watch": "vitest",
     "preview": "vite preview"
   },
@@ -52,29 +53,25 @@
   },
   "build": {
     "afterPack": "scripts/verify-h3-package.cjs",
+    "compression": "store",
+    "electronDist": "node_modules/electron/dist",
     "appId": "com.proya.creativestudio",
     "productName": "PROYA Creative Studio",
-    "directories": { "output": "release" },
+    "directories": { "output": ".portable-build" },
     "files": ["dist/**/*", "dist-electron/**/*", "data/**/*", "prompts/**/*", "package.json"],
     "extraResources": [
       { "from": "product-assets", "to": "product-assets" },
       { "from": "references", "to": "references" },
-      { "from": "workflows", "to": "workflows" },
+      { "from": "workflows/minimax-h3-api.json", "to": "workflows/minimax-h3-api.json" },
       { "from": "prompts/minimax-h3-lmstudio-system.md", "to": "prompts/minimax-h3-lmstudio-system.md" },
       { "from": "assets/app-icon.ico", "to": "app-icon.ico" }
     ],
     "extraMetadata": { "main": "dist-electron/main.cjs" },
     "win": {
-      "target": "nsis",
+      "target": [{ "target": "portable", "arch": ["x64"] }],
       "icon": "assets/app-icon.ico",
-      "artifactName": "PROYA-Creative-Studio-ChinaAutoRun-Production-20260910-r10.3.${ext}"
-    },
-    "nsis": {
-      "oneClick": false,
-      "allowToChangeInstallationDirectory": true,
-      "installerIcon": "assets/app-icon.ico",
-      "uninstallerIcon": "assets/app-icon.ico",
-      "installerHeaderIcon": "assets/app-icon.ico"
+      "signAndEditExecutable": false,
+      "artifactName": "PROYA-Creative-Studio.portable.${ext}"
     }
   }
 }

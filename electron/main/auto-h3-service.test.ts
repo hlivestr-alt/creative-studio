@@ -9,7 +9,7 @@ import { defaultSettings } from '../../src/domain/settings';
 import { products } from '../../src/domain/data';
 import { h3ContentTypeOptions, createOptionalH3ReferencePlan } from '../../src/domain/h3';
 import type { ComputeJobState, H3VideoBrief, RemoteH3GenerationRequest } from '../../src/domain/types';
-import { defaultChinaRoot, type AutoH3Config } from '../../src/domain/auto-h3';
+import { defaultArchiveRoot, type AutoH3Config } from '../../src/domain/auto-h3';
 import { autoH3CurrentStage } from '../../src/ui/AutoH3Panel';
 
 const remoteId = '550e8400-e29b-41d4-a716-446655440000';
@@ -31,7 +31,7 @@ describe('Auto H3 simulation (no GPU)', () => {
     db = new HistoryDatabase(join(root, 'test.sqlite'), await loadSqlite());
     const settings = defaultSettings(process.cwd());
     const brief: H3VideoBrief = { product: products[0].id, contentType: h3ContentTypeOptions[0], creativeVariety: 'Balanced', videoIdea: '', language: 'English', musicOnly: true, captions: false, subtitles: false, goal: 'Product reveal', customGoal: '', duration: 4, aspectRatio: '9:16', customAspectRatio: '', qualityPreset: 'Custom', megapixels: 0.98, multiple: 32, fps: 24, steps: 20, seedMode: 'random', seed: 42, refImageSize: 'max', workflowMode: 'REF2VA', cameraMotion: 'Cinematic', actionIntensity: 'High', pacing: 'Balanced', productFidelity: 'Exact', scheduler: 'simple', ending: 'Hero Shot', customEnding: '', sound: 'Music Only', promptDetail: 'Production', specialInstructions: '', references: createOptionalH3ReferencePlan(products[0]) };
-    config = { selectedProducts: products.slice(0, 3).map(p => p.id), selectedContentTypes: [...h3ContentTypeOptions], shuffleProducts: false, shuffleContentTypes: false, chinaRoot: defaultChinaRoot, laptopRoot: root, brief };
+    config = { selectedProducts: products.slice(0, 3).map(p => p.id), selectedContentTypes: h3ContentTypeOptions.filter(type => type !== 'CTA / End Card'), shuffleProducts: false, shuffleContentTypes: false, chinaRoot: defaultArchiveRoot, laptopRoot: root, brief };
     submitted = []; complete = false; disconnected = false;
     compute = new ComputeService(() => settings, () => undefined, true, db);
     vi.spyOn(compute.autoProvider(), 'testAutoArchive').mockResolvedValue();
@@ -50,11 +50,11 @@ describe('Auto H3 simulation (no GPU)', () => {
 
   it('executes products outermost, registry types innermost, two complete cycles', async () => {
     await service.start(config); await flush(); complete = true;
-    const expected = config.selectedProducts.length * h3ContentTypeOptions.length * 2;
+    const expected = config.selectedProducts.length * config.selectedContentTypes.length * 2;
     for (let i = 0; i < expected; i++) { await service.tick(); if (i < expected - 1) await service.tick(); }
     expect(submitted).toHaveLength(expected);
-    expect(expected).toBe(3 * h3ContentTypeOptions.length * 2);
-    const order = [1, 2].flatMap(cycle => config.selectedProducts.flatMap(product => h3ContentTypeOptions.map(type => [cycle, product, type])));
+    expect(expected).toBe(3 * config.selectedContentTypes.length * 2);
+    const order = [1, 2].flatMap(cycle => config.selectedProducts.flatMap(product => config.selectedContentTypes.map(type => [cycle, product, type])));
     expect(service.snapshot().jobs.reverse().map(j => [j.cycleNumber, j.product, j.contentType])).toEqual(order);
     expect(service.snapshot().sessions[0].cycleNumber).toBe(3);
     expect(new Set(submitted.map(r => r.autoJobId)).size).toBe(expected);
@@ -62,7 +62,7 @@ describe('Auto H3 simulation (no GPU)', () => {
   }, 30000);
 
   it('runs the requested three product / seven selected type / two cycle fixture (42)', async () => {
-    config.selectedContentTypes = h3ContentTypeOptions.slice(0, 7);
+    config.selectedContentTypes = h3ContentTypeOptions.filter(type => type !== 'CTA / End Card').slice(0, 7);
     await service.start(config); await flush(); complete = true;
     for (let i = 0; i < 42; i++) { await service.tick(); if (i < 41) await service.tick(); }
     expect(submitted).toHaveLength(42);
@@ -104,23 +104,25 @@ describe('Auto H3 simulation (no GPU)', () => {
     updatedBrief.references.productReference = { source: 'local-file', description: 'stale manual reference', path: 'C:\\stale\\eye-cream.png' };
 
     service.updateCurrentBrief(updatedBrief);
-    expect(first.workflowSettings).toMatchObject({ durationSeconds: 4, aspectRatio: '9:16', megapixels: 0.98, multiple: 32, fps: 24, steps: 20, scheduler: 'simple', seedMode: 'random', refImageSize: 'max' });
-    expect(first.generationBrief).toMatchObject({ duration: 4, aspectRatio: '9:16', language: 'English', musicOnly: true, captions: false, subtitles: false, sound: 'Music Only' });
+    expect(first.duration).toBeGreaterThanOrEqual(8);
+    expect(first.duration).toBeLessThanOrEqual(15);
+    expect(first.workflowSettings).toMatchObject({ durationSeconds: first.duration, aspectRatio: '9:16', megapixels: 0.98, multiple: 32, fps: 24, steps: 20, scheduler: 'simple', seedMode: 'random', refImageSize: 'max' });
+    expect(first.generationBrief).toMatchObject({ duration: first.duration, aspectRatio: '9:16', language: 'English', musicOnly: true, captions: false, subtitles: false, sound: 'Music Only' });
 
     complete = true;
     await service.tick();
     await service.tick();
 
     expect(submitted).toHaveLength(2);
-    expect(submitted[1].workflowSettings).toMatchObject({ durationSeconds: 8, aspectRatio: '16:9', megapixels: 0.49, multiple: 16, fps: 24, steps: 12, scheduler: 'beta', seedMode: 'fixed', seed: 424242, refImageSize: 'match' });
-    expect(submitted[1].generationBrief).toMatchObject({ duration: 8, aspectRatio: '16:9', language: 'Indonesian', musicOnly: false, captions: true, subtitles: true, sound: 'Sound + Music' });
-    expect(submitted[1].productReferencePath).toContain(products[0].imagePath.replaceAll('/', '\\').split('\\').at(-1));
-    expect(submitted[1].productReferencePath).not.toContain('eye-cream.png');
+    expect(submitted[1].workflowSettings).toMatchObject({ durationSeconds: submitted[1].duration, aspectRatio: '16:9', megapixels: 0.49, multiple: 16, fps: 24, steps: 12, scheduler: 'beta', seedMode: 'fixed', seed: 424242, refImageSize: 'match' });
+    expect(submitted[1].generationBrief).toMatchObject({ duration: submitted[1].duration, aspectRatio: '16:9', language: 'Indonesian', musicOnly: false, captions: true, subtitles: true, sound: 'Sound + Music' });
+    expect(submitted[1].generationBrief?.contentType).toBe('Benefits');
+    expect(submitted[1]).toMatchObject({ mode: 'T2VA', productReferencePath: null, referenceImages: [] });
   });
 
   it('sanitizes stale single-job references and injects each Auto Run product master', async () => {
     config.selectedProducts = products.slice(0, 2).map(product => product.id);
-    config.selectedContentTypes = [h3ContentTypeOptions[0]];
+    config.selectedContentTypes = ['Product'];
     config.brief.references = {
       firstFrame: { source: 'local-file', description: 'manual first', path: 'C:\\manual\\first.png' },
       lastFrame: { source: 'local-file', description: 'manual last', path: 'C:\\manual\\last.png' },
@@ -145,6 +147,34 @@ describe('Auto H3 simulation (no GPU)', () => {
     expect(submitted[1].productReferencePath).toContain(products[1].imagePath.replaceAll('/', '\\').split('\\').at(-1));
     expect(submitted[1].productReferencePath).not.toBe(submitted[0].productReferencePath);
     expect(JSON.stringify(submitted[1])).not.toContain(products[0].imagePath);
+  });
+
+  it('submits Support B-Roll in the Auto Run loop without any product reference image', async () => {
+    config.selectedProducts = [products[0].id];
+    config.selectedContentTypes = ['Support B-Roll'];
+    await service.start(config); await flush();
+
+    expect(submitted).toHaveLength(1);
+    expect(submitted[0].productReferencePath).toBeNull();
+    expect(submitted[0].mode).toBe('T2VA');
+    expect(submitted[0].referenceImages).toEqual([]);
+    expect(submitted[0].generationBrief?.contentType).toBe('Support B-Roll');
+    expect(submitted[0].generationBrief?.references).toEqual([]);
+  });
+
+  it.each(['Benefits', 'Ingredients'] as const)('submits %s with verified semantic facts and zero product references', async contentType => {
+    config.selectedProducts = [products.find(product => product.id === 'serum')!.id];
+    config.selectedContentTypes = [contentType];
+    config.brief.references.productReference = { source: 'local-file', description: 'stale product reference', path: 'C:\\stale\\product.png' };
+    await service.start(config); await flush();
+
+    expect(submitted).toHaveLength(1);
+    expect(submitted[0]).toMatchObject({ mode: 'T2VA', productReferencePath: null, referenceImages: [] });
+    expect(submitted[0].generationBrief).toMatchObject({ contentType, workflowMode: 'T2VA', references: [], productCorrections: [] });
+    const serialized = submitted[0].generationBriefText ?? JSON.stringify(submitted[0].generationBrief);
+    const authoritative = contentType === 'Benefits' ? products.find(product => product.id === 'serum')!.benefitTerritories : products.find(product => product.id === 'serum')!.ingredients;
+    for (const fact of authoritative) expect(serialized).toContain(fact);
+    expect(JSON.stringify(submitted[0])).not.toContain('stale product reference');
   });
 
   it('keeps manual references intact outside the Auto Run sanitizer input', () => {
@@ -186,6 +216,7 @@ describe('Auto H3 simulation (no GPU)', () => {
     service = new AutoH3Service(db, compute, () => defaultSettings(process.cwd()));
     expect(service.snapshot().sessions[0].status).toBe('INTERRUPTED');
     expect(service.snapshot().sessions[0].currentJobId).toBe(original.currentJobId);
+    expect(service.snapshot().jobs.find(job => job.autoJobId === original.currentJobId)?.durationSeconds).toBe(submitted[1].duration);
     await service.tick(); await service.downloadTick();
     expect(submitted).toHaveLength(2);
     service.resume(original.sessionId); await flush();
@@ -208,6 +239,9 @@ describe('Auto H3 simulation (no GPU)', () => {
     });
     for (let i = 0; i < count; i++) { await service.tick(); if (i < count - 1) await service.tick(); }
     expect(submitted).toHaveLength(count);
+    expect(new Set(submitted.map(request => request.duration)).size).toBe(1);
+    expect(new Set(submitted.map(request => request.generationBrief?.hookArchetype)).size).toBe(1);
+    expect(service.snapshot().jobs.slice(0, count).every(job => job.hookArchetype === submitted[0].generationBrief?.hookArchetype)).toBe(true);
     expect(service.snapshot().sessions[0].contentTypeIndex).toBe(1);
     expect(service.snapshot().sessions[0].failedCount).toBe(count);
     expect(service.snapshot().jobs.every(j => j.diagnostics.includes('deterministic test failure'))).toBe(true);
@@ -335,7 +369,7 @@ describe('Auto H3 simulation (no GPU)', () => {
 
     disconnected = true;
     vi.mocked(compute.submitH3).mockImplementation(async request => {
-      if (disconnected) throw new Error('Cloudflare network connection lost HTTP 502');
+      if (disconnected) throw new Error('Local network connection lost HTTP 502');
       submitted.push(request);
       return state(request, false);
     });
@@ -343,9 +377,9 @@ describe('Auto H3 simulation (no GPU)', () => {
     let snapshot = service.snapshot();
     const waitingJob = snapshot.jobs.find(job => job.autoJobId === snapshot.sessions[0].currentJobId);
     expect(snapshot.sessions[0]).toMatchObject({ failedCount: 1, contentTypeIndex: 1 });
-    expect(snapshot.sessions[0].lastError).toContain('Cloudflare network connection lost');
+    expect(snapshot.sessions[0].lastError).toContain('Local network connection lost');
     expect(snapshot.sessions[0].lastError).not.toContain('previous H3 job is not finished');
-    expect(autoH3CurrentStage(true, snapshot.sessions[0].lastError, waitingJob)).toBe('WAITING_FOR_REMOTE');
+    expect(autoH3CurrentStage(true, snapshot.sessions[0].lastError, waitingJob)).toBe('WAITING FOR LOCAL ENGINE');
     expect(submitted).toHaveLength(1);
 
     disconnected = false;

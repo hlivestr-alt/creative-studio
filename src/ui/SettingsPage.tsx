@@ -1,7 +1,7 @@
-import { CheckCircle2, Cloud, ExternalLink, FolderOpen, LockKeyhole, RefreshCw, RotateCcw, Save, Server, ShieldCheck, XCircle } from 'lucide-react';
+import { CheckCircle2, Cpu, ExternalLink, FolderOpen, LockKeyhole, RefreshCw, RotateCcw, Save, Server, ShieldCheck, XCircle } from 'lucide-react';
 import { useState, type FormEvent } from 'react';
 import { chatGptHomeUrl } from '../domain/settings';
-import { captionModeOptions, computeModeOptions, postStructureOptions, workflowModeOptions, type AppSettings, type RemoteComfySystemInfo } from '../domain/types';
+import { captionModeOptions, postStructureOptions, workflowModeOptions, type AppSettings, type RemoteComfySystemInfo } from '../domain/types';
 import { useApp } from './AppContext';
 
 export function SettingsPage() {
@@ -32,7 +32,7 @@ function SettingsForm({ initial, saveSettings }: { initial: AppSettings; saveSet
     <form className="settings-layout" onSubmit={submit}>
       <nav className="settings-nav" aria-label="Settings sections">
         <a href="#settings-chatgpt">ChatGPT</a>
-        <a href="#settings-compute">Remote compute</a>
+        <a href="#settings-compute">Local engine</a>
         <a href="#settings-creative">Creative defaults</a>
         <a href="#settings-files">Files</a>
         <a href="#settings-advanced">Advanced</a>
@@ -46,19 +46,19 @@ function SettingsForm({ initial, saveSettings }: { initial: AppSettings; saveSet
         </section>
 
         <section className="settings-section" id="settings-compute">
-          <div className="settings-section-title"><span className="settings-section-icon"><Cloud size={18} /></span><div><h2>Compute</h2><p>The H3 tab is an autonomous remote control plane: it sends the structured brief and settings to ComfyUI, where Qwen writes and validates the final prompt before MiniMax H3 runs.</p></div></div>
+          <div className="settings-section-title"><span className="settings-section-icon"><Cpu size={18} /></span><div><h2>Local engine</h2><p>The H3 tab sends the structured brief and settings to ComfyUI on this PC. The runner and custom workflow continue to own the Qwen and MiniMax H3 lifecycle.</p></div></div>
           <div className="settings-grid">
-            <label className="settings-field"><span>Compute mode</span><select aria-label="Compute mode" value={draft.computeMode} onChange={(e) => update('computeMode', e.target.value as AppSettings['computeMode'])}>{computeModeOptions.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}</select><small>{computeModeOptions.find((option) => option.value === draft.computeMode)?.description}</small></label>
-            <label className="settings-field"><span>Remote ComfyUI URL</span><input aria-label="Remote ComfyUI URL" type="url" value={draft.remoteComfyUrl} onChange={(e) => { update('remoteComfyUrl', e.target.value); setConnection(null); }} required /><small>HTTPS is required. New installs default to https://comfy.proyaofficial.com.</small></label>
-            <label className="settings-field settings-field-wide"><span>H3 API workflow file</span><input aria-label="H3 API workflow file" value={draft.remoteComfyWorkflowPath} onChange={(e) => update('remoteComfyWorkflowPath', e.target.value)} placeholder="C:\\Workflows\\minimax-h3-api.json" /><small>Required for Remote H3 submission. Use the API-format export from the working ComfyUI graph; UI workflow JSON is rejected.</small></label>
-            <label className="settings-field settings-field-wide path-field"><span>Remote result output folder</span><div><input aria-label="Remote result output folder" value={draft.remoteOutputDirectory} onChange={(e) => update('remoteOutputDirectory', e.target.value)} placeholder="C:\\PROYA\\H3 Outputs" /><button type="button" onClick={() => void window.proya.files.openFolder('remote-output')}><FolderOpen size={15} /> Open</button></div><small>Generated videos are downloaded here on this laptop; the remote PC output path is never assumed.</small></label>
+            <label className="settings-field"><span>Compute mode</span><input aria-label="Compute mode" value="Local engine" readOnly /><small>Execution is fixed to services on this PC.</small></label>
+            <label className="settings-field"><span>ComfyUI URL</span><input aria-label="ComfyUI URL" type="url" value={draft.remoteComfyUrl} readOnly required /><small>Fixed local service endpoint.</small></label>
+            <label className="settings-field settings-field-wide"><span>H3 API workflow file</span><input aria-label="H3 API workflow file" value={draft.remoteComfyWorkflowPath} onChange={(e) => update('remoteComfyWorkflowPath', e.target.value)} placeholder="C:\\Workflows\\minimax-h3-api.json" /><small>Uses the existing API-format workflow. UI workflow JSON is rejected.</small></label>
+            <label className="settings-field settings-field-wide path-field"><span>Result output folder</span><div><input aria-label="Result output folder" value={draft.remoteOutputDirectory} onChange={(e) => update('remoteOutputDirectory', e.target.value)} placeholder="C:\\PROYA\\H3 Outputs" /><button type="button" onClick={() => void window.proya.files.openFolder('remote-output')}><FolderOpen size={15} /> Open</button></div><small>Generated videos are saved locally on this PC.</small></label>
             <label className="settings-field settings-checkbox-field"><span>Automatic result download</span><input aria-label="Automatic result download" type="checkbox" checked={draft.remoteAutoDownload} onChange={(e) => update('remoteAutoDownload', e.target.checked)} /><small>Download the SaveVideo result after ComfyUI reports completion. Turn off to use Download Result manually.</small></label>
           </div>
           <div className="remote-connection-panel">
             <div className="remote-connection-header"><div><span className="settings-section-icon"><Server size={17} /></span><div><strong>Connection status</strong><small>{connection?.url || draft.remoteComfyUrl}</small></div></div><button className="button secondary small" type="button" onClick={() => void testConnection()} disabled={testingConnection}><RefreshCw size={14} className={testingConnection ? 'spin' : ''} />{testingConnection ? 'Testing…' : 'Test connection'}</button></div>
-            {connection === null ? <div className="remote-connection-empty"><span className="remote-status-dot" /><span>Not tested</span><small>Call the ComfyUI system stats endpoint to check this server.</small></div> : <div className={`remote-connection-result ${connection.connected ? 'connected' : 'disconnected'}`}><div className="remote-status-line">{connection.connected ? <CheckCircle2 size={16} /> : <XCircle size={16} />}<strong>{connection.connected ? 'Connected' : 'Disconnected'}</strong>{connection.latencyMs !== null && <small>{connection.latencyMs} ms</small>}</div>{connection.connected ? <div className="remote-system-grid"><div><span>ComfyUI version</span><strong>{connection.comfyVersion ?? 'Unavailable'}</strong></div><div><span>GPU</span><strong>{connection.gpuName ?? 'Unavailable'}</strong></div><div><span>VRAM</span><strong>{formatVram(connection.vramTotalBytes)} total</strong></div><div><span>Free VRAM</span><strong>{formatVram(connection.vramFreeBytes)}</strong></div></div> : <p>{connection.error ?? 'The remote ComfyUI server did not respond.'}</p>}</div>}
+            {connection === null ? <div className="remote-connection-empty"><span className="remote-status-dot" /><span>LOCAL ENGINE</span><small>Test the local ComfyUI system stats endpoint.</small></div> : <div className={`remote-connection-result ${connection.connected ? 'connected' : 'disconnected'}`}><div className="remote-status-line">{connection.connected ? <CheckCircle2 size={16} /> : <XCircle size={16} />}<strong>{connection.connected ? 'LOCAL ENGINE READY' : 'LOCAL ENGINE UNAVAILABLE'}</strong>{connection.latencyMs !== null && <small>{connection.latencyMs} ms</small>}</div>{connection.connected ? <div className="remote-system-grid"><div><span>ComfyUI version</span><strong>{connection.comfyVersion ?? 'Unavailable'}</strong></div><div><span>GPU</span><strong>{connection.gpuName ?? 'Unavailable'}</strong></div><div><span>VRAM</span><strong>{formatVram(connection.vramTotalBytes)} total</strong></div><div><span>Free VRAM</span><strong>{formatVram(connection.vramFreeBytes)}</strong></div></div> : <p>{connection.error ?? 'ComfyUI unavailable'}</p>}</div>}
           </div>
-          <div className="security-callout remote-auth-note"><LockKeyhole size={17} /><div><strong>Authentication is intentionally not stored in settings</strong><p>If the endpoint later requires bearer authentication, the main process can read PROYA_COMFY_AUTH_TOKEN from the environment. The current default uses no token; protect the public endpoint with Cloudflare Access or equivalent before exposing it.</p></div></div>
+          <div className="security-callout remote-auth-note"><LockKeyhole size={17} /><div><strong>Local-only compute</strong><p>ComfyUI, the production runner, and LM Studio use loopback endpoints on this PC. The app does not expose or configure these services for external access.</p></div></div>
         </section>
 
         <section className="settings-section" id="settings-creative">
@@ -77,7 +77,7 @@ function SettingsForm({ initial, saveSettings }: { initial: AppSettings; saveSet
           <div className="settings-section-body"><label className="settings-field settings-field-narrow"><span>Recent-history window</span><input type="number" min="1" max="100" value={draft.recentHistoryWindow} onChange={(e) => update('recentHistoryWindow', Number(e.target.value))} /><small>Used to discourage repeated concepts.</small></label></div>
         </details>
 
-        <div className="settings-footer"><div><ShieldCheck size={16} /><span>Planning data stays local; Remote mode sends H3 work to the configured server.</span></div><button className="button primary" type="submit"><Save size={16} />{saved ? 'Saved' : 'Save settings'}</button></div>
+        <div className="settings-footer"><div><ShieldCheck size={16} /><span>Planning and H3 execution stay on this PC.</span></div><button className="button primary" type="submit"><Save size={16} />{saved ? 'Saved' : 'Save settings'}</button></div>
       </div>
     </form>
   </div>;

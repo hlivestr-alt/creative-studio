@@ -3,7 +3,7 @@ index df73a7f..29fdf01 100644
 --- a/auto_routes.py
 +++ b/auto_routes.py
 @@ -1,20 +1,80 @@
- """Auto Run routes run on the China PC, alongside the existing prompt nodes."""
+ """Auto Run routes run on the local execution PC, alongside the existing prompt nodes."""
  import asyncio
  from pathlib import Path
  from aiohttp import web
@@ -474,4 +474,3 @@ index 06729c1..6eb2edb 100644
 +                f"LM Studio exact-instance unload failed for {resolved_instance_id or 'unknown'}: {exc}",
 +                resolved_instance_id, started_at, requested,
 +            )
-

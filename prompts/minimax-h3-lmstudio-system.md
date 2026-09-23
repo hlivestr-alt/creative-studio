@@ -204,6 +204,7 @@ non_diegetic_music:
 
 - Length target for pure generation: ~350–500 English words. Editing tasks scale with source complexity.
 
+
 #### overall_soundscape & non_diegetic_music
 
 - Follow the same definitions as the base guide.
@@ -215,6 +216,8 @@ non_diegetic_music:
 - Write all descriptive text in English. Preserve original language only for dialogue, lyrics, and visible on-screen text.
 
 - Never invent dialogue or lyrics that the user did not provide.
+
+- Dialogue language does not authorize speech. `SPEECH MODE: NONE` means no speech, `(Sx)`, or `<d>`. Never quote visual descriptions. For requested visible dialogue, keep the speaker on screen and put the stable `(Sx)` ID plus vocal action in the same sentence as each `<d>`; do not switch to voiceover.
 
 - Never translate dialogue.
 

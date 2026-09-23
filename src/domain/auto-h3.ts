@@ -1,7 +1,7 @@
 import type { H3ContentType, H3VideoBrief, ProductId, RemoteH3GenerationRequest, ComputeJobState, CreativeGenome } from './types';
 
 export const autoRetryMs = 5000;
-export const defaultChinaRoot = 'D:\\AI Videos';
+export const defaultArchiveRoot = 'D:\\AI Videos';
 export const defaultLaptopRoot = 'C:\\Users\\HYPE AMD\\Videos\\04 AI Model Work\\MiniMax';
 export interface AutoH3Config {
   selectedProducts: ProductId[];
@@ -43,6 +43,13 @@ export interface AutoH3Session {
   lastError: string | null;
 }
 export interface AutoH3Job {
+  /** Selected when this job is prepared; retries inherit it. */
+  durationSeconds?: number;
+  /** Chosen once for a new Hook job; retries inherit it. */
+  hookArchetype?: import('./hook-archetype').HookArchetype;
+  /** Immutable CTA copy captured when this job is prepared. */
+  ctaBrief?: H3VideoBrief;
+  ctaStyle?: import('./cta-settings').CtaStyle;
   autoJobId: string;
   sessionId: string;
   cycleNumber: number;
@@ -70,7 +77,7 @@ export interface AutoH3Job {
 }
 export interface AutoH3Snapshot { sessions: AutoH3Session[]; jobs: AutoH3Job[] }
 
-export interface ChinaAutoSessionMirror {
+export interface LocalAutoSessionMirror {
   sessionId: string;
   lastKnownRevision: number;
   bundleHash: string;
@@ -82,15 +89,15 @@ export interface ChinaAutoSessionMirror {
   createdTimestamp: string;
 }
 
-export interface ChinaShadowDraftIdentity {
+export interface LocalRunnerDraftIdentity {
   sessionId: string;
   bundleSha256: string;
   settingsVersionIdentity: string;
-  stagingState: ChinaAutoSessionMirror['stagingState'];
+  stagingState: LocalAutoSessionMirror['stagingState'];
   createdTimestamp: string;
 }
 
-export interface ChinaShadowStageReport {
+export interface LocalRunnerStageReport {
   runnerConnection: 'connected';
   runnerVersion: string;
   bundleId: string;
@@ -109,7 +116,7 @@ export interface ChinaShadowStageReport {
   canaryStartEnabled: boolean;
 }
 
-export interface ChinaCanaryObserver {
+export interface LocalRunnerObserver {
   connection: 'connected' | 'disconnected';
   sessionId: string;
   sessionStatus: string;
@@ -141,7 +148,7 @@ export interface ChinaCanaryObserver {
   message?: string;
 }
 
-export interface ChinaCanaryReadiness {
+export interface LocalRunnerReadiness {
   runner: {
     runnerVersion: string;
     mode: 'shadow' | 'canary' | 'two-job-canary' | 'production';
@@ -188,7 +195,7 @@ export function advanceAutoCursor(session: AutoH3Session, seed: number, random =
 
 export function isTransientTransport(reason: unknown): boolean {
   const message = reason instanceof Error ? `${reason.message} ${String(reason.cause ?? '')}` : String(reason);
-  return /fetch failed|network|socket|disconnect|cloudflare|ECONN|ENOTFOUND|EAI_AGAIN|ETIMEDOUT|connection|timed?\s*out|timeout|\b5\d{2}\b/i.test(message);
+  return /fetch failed|network|socket|disconnect|ECONN|ENOTFOUND|EAI_AGAIN|ETIMEDOUT|connection|timed?\s*out|timeout|\b5\d{2}\b/i.test(message);
 }
 
 export function safeOutputComponent(value: string): string {

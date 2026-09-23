@@ -238,6 +238,39 @@ def test_one_repair_attempt_fixes_invalid_first_completion(monkeypatch):
     assert manifest["repairAttemptsUsed"] == 1
 
 
+def test_visual_only_repair_receives_exact_validator_errors_without_authorizing_speech():
+    invalid = """integrated_multimodal_description: [Shot 1] A skincare product shows "soft fine foam". An off-screen voiceover (S1) says <d>[English] Fresh skin</d>.
+
+overall_soundscape: A voice speaks over the shot.
+
+non_diegetic_music: N/A"""
+    fixed = """integrated_multimodal_description: [Shot 1] A skincare product rests on a vanity beside soft fine foam. The camera moves gently closer to the package.
+
+overall_soundscape: Quiet room ambience accompanies the visual action.
+
+non_diegetic_music: N/A"""
+    prompts = []
+    completions = iter((invalid, fixed))
+
+    def complete(messages):
+        prompts.append(messages)
+        return next(completions)
+
+    output, report, manifest = prompt_enhancer.enhance_prompt_with_completion(
+        "SPEECH MODE: NONE. Product footage with soft fine foam. No readable text or spoken audio.",
+        "t2va", 5.0, "", complete, 1, {"provider": "test"},
+    )
+    assert output == fixed
+    assert report["valid"]
+    assert manifest["repairAttemptsUsed"] == 1
+    repair = prompts[1][-1]["content"]
+    assert "Visible quoted text was invented" in repair
+    assert "SOURCE SPEECH MODE IS NONE" in repair
+    assert "Remove every invented" in repair
+    assert "source-authorized literal quoted content" in repair
+    assert "MANDATORY DIALOGUE AUTHORING REPAIR" not in repair
+
+
 def test_simulated_121_second_rewrite_and_repair_share_600_second_read_timeout(monkeypatch):
     """Use a fake clock/transport contract; this test never sleeps."""
     simulated_durations = iter((121, 121))

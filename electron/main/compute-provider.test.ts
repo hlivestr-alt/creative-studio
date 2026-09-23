@@ -168,8 +168,8 @@ describe('RemoteComfyComputeProvider', () => {
   });
 
   it('finds only the canonical Qwen model and ignores every other LM Studio model', () => {
-    expect(parsePromptEngineDiscovery({ models: [] })).toMatchObject({ models: [], observedModelId: null, observedInstanceId: null, error: 'qwen/qwen3.8-27b is not available in LM Studio on the remote PC.' });
-    expect(parsePromptEngineDiscovery({ models: ['qwen/a', 'qwen/b'] })).toMatchObject({ models: [], observedModelId: null, observedInstanceId: null, error: 'qwen/qwen3.8-27b is not available in LM Studio on the remote PC.' });
+    expect(parsePromptEngineDiscovery({ models: [] })).toMatchObject({ models: [], observedModelId: null, observedInstanceId: null, error: 'qwen/qwen3.8-27b is not available in LM Studio on this PC.' });
+    expect(parsePromptEngineDiscovery({ models: ['qwen/a', 'qwen/b'] })).toMatchObject({ models: [], observedModelId: null, observedInstanceId: null, error: 'qwen/qwen3.8-27b is not available in LM Studio on this PC.' });
     expect(parsePromptEngineDiscovery({ models: ['qwen/a', 'qwen/qwen3.8-27b', 'qwen/b'], observed_model_id: 'qwen/other', observed_instance_id: 'other-instance' })).toMatchObject({ models: [h3PromptEngineModelId], observedModelId: h3PromptEngineModelId, observedInstanceId: null, error: null });
     expect(parsePromptEngineDiscovery({ models: ['qwen/a', h3PromptEngineModelId], observed_model_id: h3PromptEngineModelId, observed_instance_id: 'instance-a' })).toMatchObject({ models: [h3PromptEngineModelId], observedModelId: h3PromptEngineModelId, observedInstanceId: 'instance-a', error: null });
   });
@@ -479,7 +479,7 @@ describe('RemoteComfyComputeProvider', () => {
       webSocketFactory: undefined
     });
 
-    await expect(provider.submitH3(autonomousRequest(), (next) => lifecycle.push(next))).rejects.toThrow('qwen/qwen3.8-27b is not available in LM Studio on the remote PC.');
+    await expect(provider.submitH3(autonomousRequest(), (next) => lifecycle.push(next))).rejects.toThrow('qwen/qwen3.8-27b is not available in LM Studio on this PC.');
     expect(lifecycle.at(-1)).toMatchObject({ status: 'failed', pipelineStage: 'LLM_UNAVAILABLE', failureStage: 'LLM_UNAVAILABLE' });
     expect(promptPosted).toBe(false);
   });
@@ -1058,9 +1058,9 @@ describe('RemoteComfyComputeProvider', () => {
     expect(postAttempted).toBe(false);
   });
 
-  it('keeps local mode from accidentally submitting a remote job', async () => {
+  it('keeps the inactive compute mode from accidentally submitting a job', async () => {
     const provider: ComputeProvider = new LocalComputeProvider();
-    await expect(provider.submitH3({ prompt: 'x', mode: 'T2VA', duration: 4, aspectRatio: '9:16', fps: 24, frames: 107, megapixels: 0.5, multiple: 32, firstFrame: null, lastFrame: null, productReference: null })).rejects.toThrow(/Local mode/);
+    await expect(provider.submitH3({ prompt: 'x', mode: 'T2VA', duration: 4, aspectRatio: '9:16', fps: 24, frames: 107, megapixels: 0.5, multiple: 32, firstFrame: null, lastFrame: null, productReference: null })).rejects.toThrow(/compute mode/);
   });
 });
 

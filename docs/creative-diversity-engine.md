@@ -2,7 +2,7 @@
 
 The MiniMax H3 workflow uses a local Creative Diversity Engine to choose a
 fresh, art-directed execution before the autonomous Qwen prompt engine and
-Remote Compute submission. The unrelated Images workflow may still use the
+Local Engine submission. The unrelated Images workflow may still use the
 visible ChatGPT handoff. H3 keeps product truth and creative variation as
 separate layers:
 
@@ -126,7 +126,7 @@ Every new H3 plan is saved in `h3_prompt_history` with:
 - generation status.
 
 The status begins at `planned`, becomes `prepared` when the brief and direct
-settings snapshot are saved, then moves through the autonomous remote stages
+settings snapshot are saved, then moves through the autonomous local stages
 (`UPLOADING_REFERENCES`, `WRITING_PROMPT`, `VALIDATING_PROMPT`,
 `UNLOADING_LLM`, `QUEUED_H3`, `GENERATING_H3`, `RELEASING_H3_VRAM`, `DOWNLOADING`, and
 `COMPLETE`) or a distinct failure stage. Failed jobs remain in history so the
@@ -155,5 +155,5 @@ planCreativeGenome({
 
 The scheduler does not need to write concepts manually. It only needs to save
 the returned plan as a history entry and pass the concise direction into
-`H3GenerationBrief`. Remote ComfyUI, the patched prompt engine, the H3 model,
+`H3GenerationBrief`. Local ComfyUI, the patched prompt engine, the H3 model,
 and product-fidelity metadata remain the execution boundary.

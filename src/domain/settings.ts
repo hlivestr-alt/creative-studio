@@ -3,11 +3,16 @@ import { h3PromptEngineModelId, h3PromptEngineProductionDefaults, type AppSettin
 import { appSettingsSchema } from './schemas';
 
 export const chatGptHomeUrl = 'https://chatgpt.com/';
-export const defaultRemoteComfyUrl = 'https://comfy.proyaofficial.com';
+export const COMFY_BASE_URL = 'http://127.0.0.1:8188';
+export const RUNNER_BASE_URL = 'http://127.0.0.1:8787';
+export const LM_STUDIO_BASE_URL = 'http://127.0.0.1:1234';
+// Retain the persisted field name for compatibility with existing installs.
+// Local builds always normalize it to the local ComfyUI service.
+export const defaultRemoteComfyUrl = COMFY_BASE_URL;
 
 export const defaultH3PromptEngineSettings: H3PromptEngineSettings = {
   provider: 'lmstudio-remote',
-  endpoint: 'http://127.0.0.1:1234/v1',
+  endpoint: `${LM_STUDIO_BASE_URL}/v1`,
   model: h3PromptEngineModelId,
   ...h3PromptEngineProductionDefaults,
   unloadModelBeforeH3: true
@@ -15,7 +20,7 @@ export const defaultH3PromptEngineSettings: H3PromptEngineSettings = {
 
 export const defaultSettings = (projectRoot: string): AppSettings => ({
   chatGptUrl: chatGptHomeUrl,
-  computeMode: 'local',
+  computeMode: 'remote',
   remoteComfyUrl: defaultRemoteComfyUrl,
   remoteComfyWorkflowPath: `${projectRoot}/workflows/minimax-h3-api.json`,
   remoteOutputDirectory: `${projectRoot}/outputs`,
@@ -35,6 +40,36 @@ export const defaultSettings = (projectRoot: string): AppSettings => ({
   h3PromptEngine: { ...defaultH3PromptEngineSettings }
 });
 
+const bundledResourceFields = {
+  remoteComfyWorkflowPath: 'workflows/minimax-h3-api.json',
+  productAssetsDirectory: 'product-assets',
+  referencesDirectory: 'references',
+  h3SystemPromptPath: 'prompts/minimax-h3-lmstudio-system.md'
+} as const;
+
+const normalizedPath = (value: string): string => value.replaceAll('\\', '/').replace(/\/+$/, '');
+const isPortableResourcePath = (value: string): boolean => /(?:^|\/)temp\/[^/]+\/resources(?:\/|$)/i.test(normalizedPath(value));
+
+function rebindBundledResourcePaths(candidate: AppSettings, defaults: AppSettings): void {
+  for (const [field, identity] of Object.entries(bundledResourceFields) as Array<[keyof typeof bundledResourceFields, string]>) {
+    const stored = String(candidate[field] ?? '').trim();
+    if (!stored || stored === identity || (isPortableResourcePath(stored) && normalizedPath(stored).toLowerCase().endsWith(`/resources/${identity}`.toLowerCase()))) {
+      candidate[field] = defaults[field];
+    }
+  }
+  if (isPortableResourcePath(candidate.remoteOutputDirectory)) candidate.remoteOutputDirectory = defaults.remoteOutputDirectory;
+}
+
+/** Store bundled resources by stable identity, never by a portable Temp extraction path. */
+export function settingsForStorage(settings: AppSettings, defaults: AppSettings): AppSettings {
+  const stored = structuredClone(settings);
+  for (const [field, identity] of Object.entries(bundledResourceFields) as Array<[keyof typeof bundledResourceFields, string]>) {
+    if (stored[field] === defaults[field] || isPortableResourcePath(stored[field])) stored[field] = identity;
+  }
+  if (isPortableResourcePath(stored.remoteOutputDirectory)) stored.remoteOutputDirectory = defaults.remoteOutputDirectory;
+  return stored;
+}
+
 export function getChatWorkspaceUrl(settings: Pick<AppSettings, 'chatGptUrl'>): string {
   try {
     return new URL(settings.chatGptUrl).protocol === 'https:' ? settings.chatGptUrl : chatGptHomeUrl;
@@ -45,8 +80,11 @@ export function getChatWorkspaceUrl(settings: Pick<AppSettings, 'chatGptUrl'>): 
 
 export function mergeSettings(defaults: AppSettings, stored: unknown): AppSettings {
   const candidate = { ...defaults, ...(typeof stored === 'object' && stored ? stored : {}) };
-  if (!candidate.remoteComfyWorkflowPath.trim()) candidate.remoteComfyWorkflowPath = defaults.remoteComfyWorkflowPath;
-  if (!candidate.h3SystemPromptPath?.trim()) candidate.h3SystemPromptPath = defaults.h3SystemPromptPath;
+  // The local runner-native application has one production compute target. This also
+  // migrates a previously saved Cloudflare URL without requiring user action.
+  candidate.computeMode = 'remote';
+  candidate.remoteComfyUrl = COMFY_BASE_URL;
+  rebindBundledResourcePaths(candidate, defaults);
   if (!candidate.h3PromptEngine || typeof candidate.h3PromptEngine !== 'object') candidate.h3PromptEngine = defaults.h3PromptEngine;
   else if (typeof stored === 'object' && stored !== null && 'h3PromptEngine' in stored) {
     const storedPromptEngine = (stored as { h3PromptEngine?: unknown }).h3PromptEngine;

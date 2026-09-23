@@ -7,6 +7,7 @@ import type { AppSettings, ComfyOutputFile, ComputeJobState, H3LifecycleDiagnost
 import { buildH3ReferenceContext, serializeH3GenerationBrief } from '../../src/domain/h3-generation-brief';
 import { normalizeAutonomousH3PromptEngineSettings, readH3WorkflowTemplateDefaults, validateH3PromptEngineSettings, validateH3WorkflowSettings } from '../../src/domain/minimax-h3-workflow';
 import { classifyH3PromptEngineError, findComfyVideoOutputs, h3PromptEngineAudit, h3PromptEngineErrorMessage, isCanonicalComfyPromptId, LocalComputeProvider, normalizeComfyUrl, RemoteComfyComputeProvider, type ComfyAuth, type ComputeProvider } from './compute-provider';
+import { COMFY_BASE_URL } from '../../src/domain/settings';
 
 export interface ReferencePathAuthorizer {
   getAuthorizedPath(sessionId: number, sourcePath: string): string | null;
@@ -111,7 +112,7 @@ const orphanReconciliationMaxChecks = 3;
 
 export interface AutoH3OutputEvidence {
   outputs: ComfyOutputFile[];
-  /** A verified China archive is proof that this exact Auto Run job produced an MP4. */
+  /** A verified local archive is proof that this exact Auto Run job produced an MP4. */
   chinaArchived: boolean;
   chinaArchivePath: string | null;
   laptopDownloaded: boolean;
@@ -229,8 +230,8 @@ export function classifyPreviousH3Lifecycle(
   if (inspection.queueState === 'queue_pending' || inspection.historyState === 'queued') return 'PENDING_REMOTE';
   const remoteStateLost = isRemoteStateLost(state);
   const exactOutputCaptured = Boolean(exactOutputEvidence?.outputs.length);
-  const exactChinaArchive = Boolean(exactOutputEvidence?.chinaArchived);
-  const durableCompletionEvidence = exactOutputCaptured || exactChinaArchive;
+  const exactLocalArchive = Boolean(exactOutputEvidence?.chinaArchived);
+  const durableCompletionEvidence = exactOutputCaptured || exactLocalArchive;
   const completionProven = inspection.historyState === 'completed'
     || inspection.historyState === 'failed'
     || durableCompletionEvidence
@@ -417,7 +418,7 @@ export class ComputeService {
   /** Auto Run supplies persisted archive/output evidence without making the scheduler own remote probing. */
   autoOutputEvidence: ((localJobId: string) => AutoH3OutputEvidence | null) | null = null;
 
-  autoProvider(): RemoteComfyComputeProvider { return this.providerForUrl(this.getSettings().remoteComfyUrl); }
+  autoProvider(): RemoteComfyComputeProvider { return this.providerForUrl(COMFY_BASE_URL); }
 
   async recoverAutoJob(localJobId: string): Promise<ComputeJobState | null> {
     const record = this.findRecord(localJobId);
@@ -481,15 +482,17 @@ export class ComputeService {
     private readonly referenceAuthorizer?: ReferencePathAuthorizer
   ) {}
 
-  async testConnection(url: string): Promise<RemoteComfySystemInfo> {
+  async testConnection(_url: string): Promise<RemoteComfySystemInfo> {
+    void _url; // Compatibility-only IPC parameter; local target is fixed.
     try {
-      return await this.providerForUrl(url).testConnection();
+      return await this.providerForUrl(COMFY_BASE_URL).testConnection();
     } catch (reason) {
-      return connectionFailure(url, reason);
+      return connectionFailure(COMFY_BASE_URL, reason);
     }
   }
 
-  async testPromptEngine(url = this.getSettings().remoteComfyUrl, settings = this.getSettings().h3PromptEngine): Promise<H3PromptEngineStatus> {
+  async testPromptEngine(_url = this.getSettings().remoteComfyUrl, settings = this.getSettings().h3PromptEngine): Promise<H3PromptEngineStatus> {
+    void _url; // Compatibility-only IPC parameter; local target is fixed.
     const base = {
       enhancerInstalled: false,
       validatorInstalled: false,
@@ -506,7 +509,7 @@ export class ComputeService {
     try { readExactSystemPrompt(this.getSettings().h3SystemPromptPath); }
     catch (reason) { return { ...base, error: errorMessage(reason) }; }
     try {
-      return await this.providerForUrl(url).testPromptEngine(settings);
+      return await this.providerForUrl(COMFY_BASE_URL).testPromptEngine(settings);
     } catch (reason) {
       return { ...base, error: errorMessage(reason) };
     }
@@ -693,14 +696,14 @@ export class ComputeService {
       unique.set(key, output);
     }
     const outputs = findComfyVideoOutputs([...unique.values()]);
-    const verifiedChinaArchive = Boolean(callbackEvidence?.chinaArchived && callbackEvidence.chinaArchivePath);
-    if (!outputs.length && !verifiedChinaArchive) return null;
+    const verifiedLocalArchive = Boolean(callbackEvidence?.chinaArchived && callbackEvidence.chinaArchivePath);
+    if (!outputs.length && !verifiedLocalArchive) return null;
     return {
       outputs,
-      chinaArchived: Boolean(verifiedChinaArchive || state.h3LifecycleDiagnostics?.chinaArchived),
+      chinaArchived: Boolean(verifiedLocalArchive || state.h3LifecycleDiagnostics?.chinaArchived),
       chinaArchivePath: callbackEvidence?.chinaArchivePath ?? null,
       laptopDownloaded: Boolean(callbackEvidence?.laptopDownloaded),
-      source: verifiedChinaArchive ? 'china_archive' : 'persisted_output'
+      source: verifiedLocalArchive ? 'china_archive' : 'persisted_output'
     };
   }
 
@@ -1159,8 +1162,8 @@ export class ComputeService {
     if (!localPath) throw new Error('This H3 job has no downloaded local result yet.');
     const outputDirectory = resolve(this.getSettings().remoteOutputDirectory);
     const resolvedPath = resolve(localPath);
-    if (!pathWithin(outputDirectory, resolvedPath)) throw new Error('The saved result is outside the configured Remote output folder.');
-    if (!existsSync(resolvedPath)) throw new Error('The saved local result no longer exists. Download it again from the remote job.');
+    if (!pathWithin(outputDirectory, resolvedPath)) throw new Error('The saved result is outside the configured local output folder.');
+    if (!existsSync(resolvedPath)) throw new Error('The saved local result no longer exists. Download it again from the local job.');
     return resolvedPath;
   }
 
@@ -1175,11 +1178,11 @@ export class ComputeService {
     const records = this.persistence.listRemoteH3Jobs(200).sort((a, b) => Date.parse(b.createdAt) - Date.parse(a.createdAt));
     const seenServers = new Set<string>();
     for (const record of records) {
-      const server = record.state.serverUrl || this.getSettings().remoteComfyUrl;
+      const server = COMFY_BASE_URL;
       const latestOnServer = !seenServers.has(server) && isCanonicalComfyPromptId(record.remotePromptId);
       if (isCanonicalComfyPromptId(record.remotePromptId)) seenServers.add(server);
       this.records.set(record.localJobId, record);
-      const restoredState = { ...record.state, localJobId: record.localJobId, remotePromptId: record.remotePromptId };
+      const restoredState = { ...record.state, serverUrl: COMFY_BASE_URL, localJobId: record.localJobId, remotePromptId: record.remotePromptId };
       this.lastStates.set(record.localJobId, restoredState);
       let state: ComputeJobState = restoredState;
       if (record.request.autoJobId) continue; // Auto session recovery owns reconciliation and archive ordering.
@@ -1493,8 +1496,9 @@ export class ComputeService {
     return this.providerForUrl(settings.remoteComfyUrl, settings.remoteComfyWorkflowPath);
   }
 
-  private providerForJob(record: RemoteH3JobRecord): RemoteComfyComputeProvider {
-    return this.providerForUrl(record.state.serverUrl || this.getSettings().remoteComfyUrl, this.getSettings().remoteComfyWorkflowPath);
+  private providerForJob(_record: RemoteH3JobRecord): RemoteComfyComputeProvider {
+    void _record; // Historical serverUrl values must never select a remote host.
+    return this.providerForUrl(COMFY_BASE_URL, this.getSettings().remoteComfyWorkflowPath);
   }
 
   private providerForUrl(url: string, workflowPath = this.getSettings().remoteComfyWorkflowPath): RemoteComfyComputeProvider {

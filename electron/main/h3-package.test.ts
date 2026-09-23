@@ -26,4 +26,24 @@ describe('H3 packaged workflow contract', () => {
       rmSync(resources, { recursive: true, force: true });
     }
   });
+
+  it('rejects a package missing the required workflow resource', () => {
+    const resources = mkdtempSync(join(tmpdir(), 'h3-package-missing-'));
+    try {
+      expect(() => verifyH3Package(process.cwd(), resources)).toThrow(/minimax-h3-api\.json/);
+    } finally {
+      rmSync(resources, { recursive: true, force: true });
+    }
+  });
+
+  it('rejects a package missing any required product master', () => {
+    const resources = mkdtempSync(join(tmpdir(), 'h3-package-missing-product-'));
+    try {
+      mkdirSync(join(resources, 'workflows'));
+      writeFileSync(join(resources, 'workflows/minimax-h3-api.json'), readFileSync(join(process.cwd(), 'workflows/minimax-h3-api.json')));
+      expect(() => verifyH3Package(process.cwd(), resources)).toThrow(/product-assets[\\/]cleanser\.png/);
+    } finally {
+      rmSync(resources, { recursive: true, force: true });
+    }
+  });
 });

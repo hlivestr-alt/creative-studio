@@ -1,4 +1,4 @@
-import { AutoH3Panel } from './AutoH3Panel';
+import { AutoH3Panel, localRuntimeMessage } from './AutoH3Panel';
 import { Cloud, Download, ExternalLink, FolderOpen, History, RefreshCw, Server, Sparkles } from 'lucide-react';
 import { useEffect, useMemo, useRef, useState, type ChangeEvent } from 'react';
 import {
@@ -17,6 +17,9 @@ import { buildH3GenerationBrief, buildH3ReferenceContext, serializeH3GenerationB
 import { h3WorkflowTemplateDefaults, validateH3WorkflowSettings } from '../domain/minimax-h3-workflow';
 import { defaultH3PromptEngineSettings } from '../domain/settings';
 import { planCreativeGenome, resolveCreativeFamilyForH3VideoType } from '../domain/creative-diversity';
+import { isNoProductVideo, supportBRollReferencePlan } from '../domain/support-b-roll';
+import { selectAutoDuration } from '../domain/auto-duration';
+import { ctaStyles, defaultCtaSettings, isCtaEndCard, type CtaSettings } from '../domain/cta-settings';
 import { getProduct, products } from '../domain/data';
 import { creativeVarietyOptions as creativeVarietyValues, h3PromptEngineModelId, h3PromptEngineModelLabel, type AppSettings, type ComputeJobState, type CreativeVariety, type H3PromptEngineSettings, type H3PromptEngineStatus, type H3PromptRecord, type H3ReferenceAsset, type H3ReferencePlan, type H3ReferenceSource, type H3Scheduler, type H3Sound, type H3VideoBrief, type Product, type ProductId } from '../domain/types';
 import { ProductCard } from './ProductCard';
@@ -81,7 +84,7 @@ function createSimpleH3Brief(productId: ProductId, workflowSettings: typeof h3Wo
   const references = createOptionalH3ReferencePlan(product);
   return {
     product: product.id,
-    contentType: 'Cinematic Product Ad',
+    contentType: 'Product',
     creativeVariety: 'Balanced',
     videoIdea: '',
     language: 'Indonesian',
@@ -202,6 +205,7 @@ export function H3VideoPromptsPage() {
   const [submitting, setSubmitting] = useState(false);
   const [resettingWorkflowDefaults, setResettingWorkflowDefaults] = useState(false);
   const [error, setError] = useState('');
+  const [ctaOutputPath, setCtaOutputPath] = useState('');
   const [copied, setCopied] = useState(false);
   const [showDebugPrompt, setShowDebugPrompt] = useState(false);
   const workflowSettingsInitialized = useRef(false);
@@ -215,8 +219,10 @@ export function H3VideoPromptsPage() {
     try { return validateH3WorkflowSettings(workflowSettings); } catch { return null; }
   }, [workflowSettings]);
   const promptEngine = defaultPromptEngine(appSettings);
+  const supportBRoll = isNoProductVideo(brief.contentType);
+  const cta = isCtaEndCard(brief.contentType);
   const productReferenceReady = brief.references.productReference.source === 'selected-product' || brief.references.productReference.source === 'local-file';
-  const canGenerate = Boolean(appSettings && workflowSettingsPreview && productReferenceReady && promptEngineStatus?.qwenReady);
+  const canGenerate = Boolean(appSettings && (cta || workflowSettingsPreview && (supportBRoll || productReferenceReady) && promptEngineStatus?.qwenReady));
   const videoOutput = remoteJob?.outputs.find((output) => output.kind === 'video' && output.nodeId === '92') ?? remoteJob?.outputs.find((output) => output.kind === 'video');
 
   useEffect(() => {
@@ -236,7 +242,7 @@ export function H3VideoPromptsPage() {
     if (!remoteComfyUrlForDiscovery || !promptEngineSettingsForDiscovery) return;
     void window.proya.compute.testPromptEngine(remoteComfyUrlForDiscovery, promptEngineSettingsForDiscovery)
       .then(setPromptEngineStatus)
-      .catch((reason: unknown) => setPromptEngineStatus({ enhancerInstalled: false, validatorInstalled: false, requiredNodesInstalled: false, lmStudioConnected: false, models: [], observedModelId: null, observedInstanceId: null, selectedModel: null, qwenReady: false, error: reason instanceof Error ? reason.message : 'Could not inspect the remote H3 prompt engine.', checkedAt: new Date().toISOString() }))
+      .catch((reason: unknown) => setPromptEngineStatus({ enhancerInstalled: false, validatorInstalled: false, requiredNodesInstalled: false, lmStudioConnected: false, models: [], observedModelId: null, observedInstanceId: null, selectedModel: null, qwenReady: false, error: reason instanceof Error ? reason.message : 'Could not inspect the local H3 prompt engine.', checkedAt: new Date().toISOString() }))
       .finally(() => setTestingPromptEngine(false));
   }, [promptEngineSettingsForDiscovery, remoteComfyUrlForDiscovery]);
 
@@ -304,7 +310,12 @@ export function H3VideoPromptsPage() {
   };
 
   const updateBrief = <K extends keyof H3VideoBrief>(key: K, value: H3VideoBrief[K]) => {
-    setBrief((current) => ({ ...current, [key]: value }));
+    setBrief((current) => {
+      const next = { ...current, [key]: value } as H3VideoBrief;
+      return key === 'contentType' && isNoProductVideo(next.contentType)
+        ? { ...next, references: supportBRollReferencePlan(next.references) }
+        : next;
+    });
     resetSession();
   };
 
@@ -358,7 +369,9 @@ export function H3VideoPromptsPage() {
     if (!nextProduct) return;
     if (brief.references.productReference.source === 'local-file') void window.proya.files.clearReferenceAuthorization();
     const references = createOptionalH3ReferencePlan(nextProduct);
-    setBrief((current) => ({ ...current, product: productId, references: { ...references, productReference: referenceAssetForSource(references.productReference, 'selected-product', nextProduct, 'productReference') } }));
+    setBrief((current) => ({ ...current, product: productId, references: isNoProductVideo(current.contentType)
+      ? supportBRollReferencePlan(references)
+      : { ...references, productReference: referenceAssetForSource(references.productReference, 'selected-product', nextProduct, 'productReference') } }));
     resetSession();
   };
 
@@ -393,21 +406,37 @@ export function H3VideoPromptsPage() {
     setTestingPromptEngine(true);
     setError('');
     try { setPromptEngineStatus(await window.proya.compute.testPromptEngine(appSettings.remoteComfyUrl, appSettings.h3PromptEngine)); }
-    catch (reason) { setError(reason instanceof Error ? reason.message : 'Could not inspect the remote H3 prompt engine.'); }
+    catch (reason) { setError(reason instanceof Error ? reason.message : 'Could not inspect the local H3 prompt engine.'); }
     finally { setTestingPromptEngine(false); }
   };
 
   const generate = async () => {
+    if (cta) {
+      setSubmitting(true); setError(''); setCtaOutputPath('');
+      try {
+        const duration = selectAutoDuration();
+        const ctaBrief = { ...brief, duration, cta: { ...defaultCtaSettings, ...brief.cta, duration } };
+        const result = await window.proya.compute.renderCta(ctaBrief);
+        const record = await createH3Prompt({ product: product.id, contentType: 'CTA / End Card', brief: ctaBrief, concept: null,
+          resolvedMode: 'REF2VA', referencePlan: brief.references, timeline: [], prompt: '', generationStatus: 'completed', outputPath: result.path });
+        setGeneratedRecordId(record.id); setCtaOutputPath(result.path);
+      } catch (reason) { setError(reason instanceof Error ? reason.message : String(reason)); }
+      finally { setSubmitting(false); }
+      return;
+    }
     if (!appSettings || !workflowSettingsPreview) { setError('Correct the H3 Generation Settings before generating.'); return; }
-    if (!productReferenceReady) { setError('Select a Product Reference Image before generating.'); return; }
-    if (!promptEngineStatus?.qwenReady) { setError(promptEngineStatus?.error ?? 'Prompt Engine is not ready on the China execution PC.'); return; }
+    if (!supportBRoll && !productReferenceReady) { setError('Select a Product Reference Image before generating.'); return; }
+    if (!promptEngineStatus?.qwenReady) { setError(promptEngineStatus?.error ?? 'Prompt Engine is not ready on the Local Engine.'); return; }
     setError('');
     setSubmitting(true);
     const seed = createCreativeSeed();
     const generationJobId = createCreativeGenerationJobId(seed);
     try {
       const selectedContentType = resolveCreativeFamilyForH3VideoType(brief.contentType);
-      const sessionBrief = { ...brief, contentType: selectedContentType, workflowMode: 'REF2VA' as const, creativeSeed: seed, creativeVariety: brief.creativeVariety ?? 'Balanced' };
+      const duration = selectAutoDuration();
+      const noProduct = isNoProductVideo(selectedContentType);
+      const sessionBrief = { ...brief, duration, contentType: selectedContentType, workflowMode: noProduct ? 'T2VA' as const : 'REF2VA' as const, creativeSeed: seed, creativeVariety: brief.creativeVariety ?? 'Balanced', references: noProduct ? supportBRollReferencePlan(brief.references) : brief.references };
+      const jobWorkflow = validateH3WorkflowSettings(h3WorkflowSettingsFromBrief(sessionBrief));
       const selectedPlan = planCreativeGenome({
         product,
         contentFamily: selectedContentType,
@@ -429,7 +458,7 @@ export function H3VideoPromptsPage() {
         contentType: plannedBrief.contentType,
         brief: plannedBrief,
         concept: null,
-        resolvedMode: 'REF2VA',
+        resolvedMode: sessionBrief.workflowMode,
         referencePlan: plannedBrief.references,
         timeline: [],
         chatGptRequest: '',
@@ -473,23 +502,23 @@ export function H3VideoPromptsPage() {
         mediaManifest: nextGenerationBrief.mediaManifest,
         allowedReferenceLabels: nextGenerationBrief.allowedReferenceLabels,
         promptEngine: effectiveEngine,
-        mode: 'REF2VA',
-        duration: workflowSettingsPreview.durationSeconds,
-        aspectRatio: workflowSettingsPreview.aspectRatio,
-        fps: workflowSettingsPreview.fps,
-        frames: workflowSettingsPreview.frameLength,
-        megapixels: workflowSettingsPreview.megapixels,
-        multiple: workflowSettingsPreview.multiple,
-        steps: workflowSettingsPreview.steps,
-        seed: workflowSettingsPreview.seed,
+        mode: sessionBrief.workflowMode,
+        duration: jobWorkflow.durationSeconds,
+        aspectRatio: jobWorkflow.aspectRatio,
+        fps: jobWorkflow.fps,
+        frames: jobWorkflow.frameLength,
+        megapixels: jobWorkflow.megapixels,
+        multiple: jobWorkflow.multiple,
+        steps: jobWorkflow.steps,
+        seed: jobWorkflow.seed,
         firstFrame: null,
         lastFrame: null,
         productReference: null,
-        productReferencePath: references.productReferencePath,
+        productReferencePath: noProduct ? null : references.productReferencePath,
         referenceImages: references.referenceImages,
-        refImageSize: workflowSettingsPreview.refImageSize,
-        scheduler: workflowSettingsPreview.scheduler,
-        workflowSettings: workflowSettingsPreview,
+        refImageSize: jobWorkflow.refImageSize,
+        scheduler: jobWorkflow.scheduler,
+        workflowSettings: jobWorkflow,
         product: product.id,
         promptRecordId: record.id,
         localJobId: generationJobId
@@ -532,33 +561,34 @@ export function H3VideoPromptsPage() {
     <div className="h3-autonomous-layout">
       <main className="h3-control-panel">
         <header className="page-header h3-page-header">
-          <div><span className="eyebrow">Autonomous H3 video control plane</span><h1>MiniMax H3 Setup</h1><p>Write a compact creative brief on this laptop. Qwen and ComfyUI execute the prompt and video on the China RTX 5090 PC.</p></div>
-          <span className="h3-header-badge"><Cloud size={14} /> Remote Qwen · REF2VA</span>
+          <div><span className="eyebrow">Autonomous H3 video control plane</span><h1>MiniMax H3 Setup</h1><p>Write a compact creative brief here. Qwen and ComfyUI execute the prompt and video locally on this PC.</p></div>
+          <span className="h3-header-badge"><Cloud size={14} /> Local Qwen · {supportBRoll ? 'T2VA' : 'REF2VA'}</span>
         </header>
         <AutoH3Panel brief={brief} onActive={setAutoActive} />
 
-        <div className="h3-boundary-note"><Server size={15} /><span>Creative Studio never calls LM Studio or writes final prompt text. The remote ComfyUI workflow owns enhancement, validation, unload, and H3 generation.</span></div>
+        <div className="h3-boundary-note"><Server size={15} /><span>Creative Studio never calls LM Studio or writes final prompt text. The local ComfyUI workflow owns enhancement, validation, unload, and H3 generation.</span></div>
 
-        <section className="h3-section"><H3SectionHeading title="Product" note="The product reference is required for REF2VA." /><div className="h3-product-grid">{products.map((item) => <ProductCard key={item.id} product={item} selected={item.id === brief.product} onSelect={(id) => { if (id !== 'auto') selectProduct(id); }} />)}</div><div className="h3-product-lock"><span className="ready-dot" /><div><strong>{product.officialName}</strong><span>Identity reference locked to selected product</span></div><small>{productReferenceReady ? 'Ready' : 'Select a reference'}</small></div></section>
+        <section className="h3-section"><H3SectionHeading title="Product" note={supportBRoll ? 'The selection guides the theme only; it will not be shown or sent as an image.' : 'The product reference is required for REF2VA.'} /><div className="h3-product-grid">{products.map((item) => <ProductCard key={item.id} product={item} selected={item.id === brief.product} onSelect={(id) => { if (id !== 'auto') selectProduct(id); }} />)}</div><div className="h3-product-lock"><span className="ready-dot" /><div><strong>{product.officialName}</strong><span>{supportBRoll ? 'Semantic theme only · no product visibility' : 'Identity reference locked to selected product'}</span></div><small>{supportBRoll ? 'Theme ready' : productReferenceReady ? 'Ready' : 'Select a reference'}</small></div></section>
 
-        <section className="h3-section"><H3SectionHeading title="Creative brief" note="Qwen receives this intermediate brief." /><label className="h3-field h3-field-wide"><span>Content type</span><select aria-label="H3 content type" value={brief.contentType} onChange={(event) => updateBrief('contentType', event.target.value as H3VideoBrief['contentType'])}>{h3ContentTypeOptions.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}</select></label><label className="h3-field h3-field-wide"><span>Video idea</span><textarea aria-label="H3 video idea" value={brief.videoIdea} onChange={(event) => updateBrief('videoIdea', event.target.value)} placeholder="Describe the product moment, action, or emotional beat you want." rows={4} /></label><label className="h3-field h3-field-wide"><span>Special instructions</span><textarea aria-label="H3 special instructions" value={brief.specialInstructions} onChange={(event) => updateBrief('specialInstructions', event.target.value)} placeholder="Optional constraints or staging details." rows={3} /></label><label className="h3-field h3-field-wide"><span>Creative diversity</span><select value={brief.creativeVariety} onChange={(event) => updateBrief('creativeVariety', event.target.value as CreativeVariety)}>{creativeVarietyOptions.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}</select></label></section>
+        <section className="h3-section"><H3SectionHeading title="Creative brief" note={cta ? 'CTA renders locally with exact text.' : 'Qwen receives this intermediate brief.'} /><label className="h3-field h3-field-wide"><span>Content type</span><select aria-label="H3 content type" value={brief.contentType} onChange={(event) => updateBrief('contentType', event.target.value as H3VideoBrief['contentType'])}>{h3ContentTypeOptions.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}</select></label>{!cta && <><label className="h3-field h3-field-wide"><span>Video idea</span><textarea aria-label="H3 video idea" value={brief.videoIdea} onChange={(event) => updateBrief('videoIdea', event.target.value)} placeholder="Describe the product moment, action, or emotional beat you want." rows={4} /></label><label className="h3-field h3-field-wide"><span>Special instructions</span><textarea aria-label="H3 special instructions" value={brief.specialInstructions} onChange={(event) => updateBrief('specialInstructions', event.target.value)} placeholder="Optional constraints or staging details." rows={3} /></label><label className="h3-field h3-field-wide"><span>Creative diversity</span><select value={brief.creativeVariety} onChange={(event) => updateBrief('creativeVariety', event.target.value as CreativeVariety)}>{creativeVarietyOptions.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}</select></label></>}</section>
+        {cta && <section className="h3-section"><H3SectionHeading title="CTA / End Card" note="Exact copy is overlaid after composing the verified product master." /><div className="h3-setting-grid"><label className="h3-field"><span>CTA Style</span><select value={brief.cta?.style ?? 'Auto'} onChange={event => updateBrief('cta', { ...defaultCtaSettings, ...brief.cta, style: event.target.value as CtaSettings['style'] })}>{ctaStyles.map(style => <option key={style}>{style}</option>)}</select></label><div className="h3-field"><span>Duration</span><strong>Random 8–15 sec</strong></div>{([['price','Price (optional)'], ['action','CTA Action'], ['benefit','Benefit Text'], ['promo','Promo Text']] as const).map(([key,label]) => <label className="h3-field" key={key}><span>{label}</span><input value={brief.cta?.[key] ?? ''} placeholder={key === 'action' ? brief.language === 'English' ? 'Shop now' : 'Cek sekarang' : ''} onChange={event => updateBrief('cta', { ...defaultCtaSettings, ...brief.cta, [key]: event.target.value })} /></label>)}</div></section>}
 
         <section className="h3-section"><H3SectionHeading title="Audio & language" note="These constraints become part of H3GenerationBrief." /><div className="h3-form-grid"><label className="h3-field"><span>Language</span><select aria-label="H3 language" value={brief.language} onChange={(event) => updateBrief('language', event.target.value as H3VideoBrief['language'])}>{h3LanguageOptions.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}</select></label><label className="h3-field"><span>Sound</span><select aria-label="H3 sound" value={brief.sound} onChange={(event) => { const sound = event.target.value as H3Sound; setBrief((current) => ({ ...current, sound, musicOnly: sound === 'Music Only' ? true : current.musicOnly })); resetSession(); }}>{h3SoundOptions.map((option) => <option key={option} value={option}>{option}</option>)}</select></label></div><div className="h3-engine-flags h3-audio-flags"><label><input type="checkbox" checked={brief.musicOnly} onChange={(event) => updateMusicOnly(event.target.checked)} /> Music Only</label><label><input type="checkbox" checked={brief.captions} onChange={(event) => updateBrief('captions', event.target.checked)} /> Allow generated captions</label><label><input type="checkbox" checked={brief.subtitles} disabled={brief.musicOnly} onChange={(event) => updateBrief('subtitles', event.target.checked)} /> Allow generated subtitles</label></div></section>
 
-        <section className="h3-section"><H3SectionHeading title="H3 Generation Settings" note="Direct values are injected into the API workflow." /><div className="h3-setting-grid"><label className="h3-field"><span>Duration</span><input aria-label="H3 duration" type="number" min={4} max={15} step={0.01} value={brief.duration} onChange={(event) => updateWorkflowSetting('duration', Number(event.target.value))} /></label><label className="h3-field"><span>Aspect ratio</span><select aria-label="H3 aspect ratio" value={brief.aspectRatio} onChange={(event) => updateWorkflowSetting('aspectRatio', event.target.value as H3VideoBrief['aspectRatio'])}>{h3AspectRatioOptions.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}</select></label><label className="h3-field"><span>Megapixels</span><input aria-label="H3 megapixels" type="number" min={0.1} max={16} step={0.01} value={brief.megapixels} onChange={(event) => updateWorkflowSetting('megapixels', Number(event.target.value))} /></label><label className="h3-field"><span>Multiple</span><input aria-label="H3 multiple" type="number" min={8} max={128} step={4} value={brief.multiple} onChange={(event) => updateWorkflowSetting('multiple', Number(event.target.value))} /></label><label className="h3-field"><span>Steps</span><input aria-label="H3 steps" type="number" min={1} value={brief.steps ?? workflowSettings.steps} onChange={(event) => updateWorkflowSetting('steps', Number(event.target.value))} /></label><label className="h3-field"><span>Scheduler</span><select aria-label="H3 scheduler" value={brief.scheduler} onChange={(event) => updateWorkflowSetting('scheduler', event.target.value as H3Scheduler)}>{h3SchedulerOptions.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}</select></label></div><div className="h3-calculated-grid"><div className="h3-calculated-setting"><span>FPS</span><strong>24</strong></div><div className="h3-calculated-setting"><span>Frames</span><strong>{workflowSettingsPreview?.frameLength ?? '—'}</strong></div><div className="h3-calculated-setting"><span>Resolution</span><strong>{workflowSettingsPreview ? `${workflowSettingsPreview.resolvedWidth} × ${workflowSettingsPreview.resolvedHeight}` : '—'}</strong></div></div><div className="h3-setting-actions"><label className="h3-field"><span>Ref image size</span><select aria-label="H3 ref image size" value={brief.refImageSize} onChange={(event) => updateWorkflowSetting('refImageSize', event.target.value as H3VideoBrief['refImageSize'])}>{h3RefImageSizeOptions.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}</select></label><button className="button secondary small" type="button" onClick={() => void resetH3WorkflowDefaults()} disabled={resettingWorkflowDefaults}><RefreshCw size={14} className={resettingWorkflowDefaults ? 'spin' : ''} />{resettingWorkflowDefaults ? 'Reloading…' : 'Reset to workflow defaults'}</button></div></section>
+        <section className="h3-section"><H3SectionHeading title="H3 Generation Settings" note="Direct values are injected into the API workflow." /><div className="h3-setting-grid"><div className="h3-field"><span>Duration</span><strong>Random 8–15 sec</strong></div><label className="h3-field"><span>Aspect ratio</span><select aria-label="H3 aspect ratio" value={brief.aspectRatio} onChange={(event) => updateWorkflowSetting('aspectRatio', event.target.value as H3VideoBrief['aspectRatio'])}>{h3AspectRatioOptions.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}</select></label><label className="h3-field"><span>Megapixels</span><input aria-label="H3 megapixels" type="number" min={0.1} max={16} step={0.01} value={brief.megapixels} onChange={(event) => updateWorkflowSetting('megapixels', Number(event.target.value))} /></label><label className="h3-field"><span>Multiple</span><input aria-label="H3 multiple" type="number" min={8} max={128} step={4} value={brief.multiple} onChange={(event) => updateWorkflowSetting('multiple', Number(event.target.value))} /></label><label className="h3-field"><span>Steps</span><input aria-label="H3 steps" type="number" min={1} value={brief.steps ?? workflowSettings.steps} onChange={(event) => updateWorkflowSetting('steps', Number(event.target.value))} /></label><label className="h3-field"><span>Scheduler</span><select aria-label="H3 scheduler" value={brief.scheduler} onChange={(event) => updateWorkflowSetting('scheduler', event.target.value as H3Scheduler)}>{h3SchedulerOptions.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}</select></label></div><div className="h3-calculated-grid"><div className="h3-calculated-setting"><span>FPS</span><strong>24</strong></div><div className="h3-calculated-setting"><span>Frames</span><strong>Varies by job (17k+5)</strong></div><div className="h3-calculated-setting"><span>Resolution</span><strong>{workflowSettingsPreview ? `${workflowSettingsPreview.resolvedWidth} × ${workflowSettingsPreview.resolvedHeight}` : '—'}</strong></div></div><div className="h3-setting-actions"><label className="h3-field"><span>Ref image size</span><select aria-label="H3 ref image size" value={brief.refImageSize} onChange={(event) => updateWorkflowSetting('refImageSize', event.target.value as H3VideoBrief['refImageSize'])}>{h3RefImageSizeOptions.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}</select></label><button className="button secondary small" type="button" onClick={() => void resetH3WorkflowDefaults()} disabled={resettingWorkflowDefaults}><RefreshCw size={14} className={resettingWorkflowDefaults ? 'spin' : ''} />{resettingWorkflowDefaults ? 'Reloading…' : 'Reset to workflow defaults'}</button></div></section>
 
-        <section className="h3-section"><H3SectionHeading title="References" note="Only concrete connected images receive Picture labels." /><div className="h3-reference-grid"><ReferenceSlot slot="productReference" asset={brief.references.productReference} product={product} onSourceChange={(source) => updateReference('productReference', source)} onDescriptionChange={(description) => updateReferenceDescription('productReference', description)} onLocalFileSelect={chooseLocalProductReference} onClearLocalFile={clearLocalProductReference} onError={setError} /><ReferenceSlot slot="styleReference" asset={brief.references.styleReference} product={product} onSourceChange={(source) => updateReference('styleReference', source)} onDescriptionChange={(description) => updateReferenceDescription('styleReference', description)} onError={setError} /></div><div className="h3-reference-mapping"><strong>Authoritative REF2VA mapping</strong>{buildH3ReferenceSlotMappings(brief.references).length > 0 ? buildH3ReferenceSlotMappings(brief.references).map((mapping) => <span key={mapping.pictureTag}><b>{mapping.pictureTag}</b> → LoadImage → <b>{mapping.refInput}</b> · {mapping.role}</span>) : <span>No connected reference image. Generation is blocked.</span>}</div></section>
+        <section className="h3-section"><H3SectionHeading title="References" note={supportBRoll ? 'This content type is text-only; no reference image is sent to H3.' : 'Only concrete connected images receive Picture labels.'} />{supportBRoll ? <div className="h3-reference-mapping"><strong>Non-product reference policy</strong><span>No product, packaging, logo, label, or reference image will be injected.</span></div> : <><div className="h3-reference-grid"><ReferenceSlot slot="productReference" asset={brief.references.productReference} product={product} onSourceChange={(source) => updateReference('productReference', source)} onDescriptionChange={(description) => updateReferenceDescription('productReference', description)} onLocalFileSelect={chooseLocalProductReference} onClearLocalFile={clearLocalProductReference} onError={setError} /><ReferenceSlot slot="styleReference" asset={brief.references.styleReference} product={product} onSourceChange={(source) => updateReference('styleReference', source)} onDescriptionChange={(description) => updateReferenceDescription('styleReference', description)} onError={setError} /></div><div className="h3-reference-mapping"><strong>Authoritative REF2VA mapping</strong>{buildH3ReferenceSlotMappings(brief.references).length > 0 ? buildH3ReferenceSlotMappings(brief.references).map((mapping) => <span key={mapping.pictureTag}><b>{mapping.pictureTag}</b> → LoadImage → <b>{mapping.refInput}</b> · {mapping.role}</span>) : <span>No connected reference image. Generation is blocked.</span>}</div></>}</section>
 
         <PromptEngineSettings status={promptEngineStatus} testing={testingPromptEngine} onRefresh={() => void refreshPromptEngine()} />
 
-        <section className="h3-generate-panel"><div><span className="eyebrow">One-click autonomous pipeline</span><h2>Ready to generate?</h2><p>Creative Diversity runs first, then the remote graph writes, validates, unloads the exact prompt-model instance, and queues H3.</p></div><button className="h3-generate-button" type="button" aria-label="Generate H3 video" onClick={() => void generate()} disabled={!canGenerate || submitting || autoActive}><Sparkles size={18} />{submitting ? 'Starting remote H3…' : 'Generate H3 video'}<span>→</span></button>{!productReferenceReady && <small className="h3-help">Select a product reference to enable generation.</small>}{!promptEngineStatus?.qwenReady && <small className="h3-help">Prompt Engine must be ready on the China execution PC.</small>}{error && <p className="error-note h3-error">{error}</p>}</section>
+        <section className="h3-generate-panel"><div><span className="eyebrow">{cta ? 'Local end-card renderer' : 'One-click autonomous pipeline'}</span><h2>Ready to generate?</h2><p>{cta ? 'Verified PNG + premium composition + exact text overlay. No Qwen or H3.' : 'Creative Diversity runs first, then the local graph writes, validates, unloads the exact prompt-model instance, and queues H3.'}</p></div><button className="h3-generate-button" type="button" aria-label={cta ? 'Generate CTA video' : 'Generate H3 video'} onClick={() => void generate()} disabled={!canGenerate || submitting || autoActive}><Sparkles size={18} />{submitting ? 'Generating…' : cta ? 'Generate CTA video' : 'Generate H3 video'}<span>→</span></button>{!cta && !supportBRoll && !productReferenceReady && <small className="h3-help">Select a product reference to enable generation.</small>}{!cta && !promptEngineStatus?.qwenReady && <small className="h3-help">Prompt Engine must be ready on this PC.</small>}{ctaOutputPath && <p className="h3-help">CTA saved: {ctaOutputPath}</p>}{error && <p className="error-note h3-error">{error}</p>}</section>
       </main>
 
       <aside className="h3-right-rail">
         <RemoteH3Status job={remoteJob} onOpenOutput={(output) => void window.proya.compute.openOutput(output)} onDownloadResult={() => void downloadResult()} onOpenResult={() => { if (remoteJob?.localJobId) void window.proya.compute.openResult(remoteJob.localJobId); }} />
         <H3VramReleaseTelemetry job={remoteJob} />
-        <section className="h3-preview-card"><div className="h3-rail-heading"><div><span className="eyebrow">Output</span><h2>Video preview</h2></div>{videoOutput && <span className="h3-status-pill complete">Ready</span>}</div>{videoOutput ? <video className="h3-video-preview" controls preload="metadata" src={videoOutput.url}>Your browser cannot preview this video.</video> : <div className="h3-video-empty"><Cloud size={22} /><span>{remoteJob?.pipelineStage === 'COMPLETE' ? 'Video downloaded to this laptop.' : 'The generated video will appear here after ComfyUI completes.'}</span></div>}{remoteJob?.localResultPath && <div className="h3-local-result"><span>Downloaded result</span><strong title={remoteJob.localResultPath}>{remoteJob.localResultPath}</strong><button type="button" onClick={() => { if (remoteJob.localJobId) void window.proya.compute.openResult(remoteJob.localJobId); }}><ExternalLink size={13} />Open result</button></div>}</section>
-        <section className="h3-debug-card"><div className="h3-rail-heading"><div><span className="eyebrow">Read-only debug</span><h2>Final prompt</h2></div><button className="button secondary small" type="button" onClick={() => void copyFinalPrompt()} disabled={!remoteJob?.finalEnhancedPrompt}>{copied ? 'Copied' : 'Copy'}</button></div><p>Only the remote enhancer output is shown here. This panel never edits or feeds the job.</p><button className="h3-debug-toggle" type="button" onClick={() => setShowDebugPrompt((value) => !value)}>{showDebugPrompt ? 'Hide final prompt' : 'Show final prompt'}</button>{showDebugPrompt && <pre className="h3-final-prompt">{remoteJob?.finalEnhancedPrompt ?? 'Waiting for MiniMaxH3PromptEnhancer output.'}</pre>}</section>
+        <section className="h3-preview-card"><div className="h3-rail-heading"><div><span className="eyebrow">Output</span><h2>Video preview</h2></div>{videoOutput && <span className="h3-status-pill complete">Ready</span>}</div>{videoOutput ? <video className="h3-video-preview" controls preload="metadata" src={videoOutput.url}>Your browser cannot preview this video.</video> : <div className="h3-video-empty"><Cloud size={22} /><span>{remoteJob?.pipelineStage === 'COMPLETE' ? 'Video saved locally.' : 'The generated video will appear here after ComfyUI completes.'}</span></div>}{remoteJob?.localResultPath && <div className="h3-local-result"><span>Downloaded result</span><strong title={remoteJob.localResultPath}>{remoteJob.localResultPath}</strong><button type="button" onClick={() => { if (remoteJob.localJobId) void window.proya.compute.openResult(remoteJob.localJobId); }}><ExternalLink size={13} />Open result</button></div>}</section>
+        <section className="h3-debug-card"><div className="h3-rail-heading"><div><span className="eyebrow">Read-only debug</span><h2>Final prompt</h2></div><button className="button secondary small" type="button" onClick={() => void copyFinalPrompt()} disabled={!remoteJob?.finalEnhancedPrompt}>{copied ? 'Copied' : 'Copy'}</button></div><p>Only the local enhancer output is shown here. This panel never edits or feeds the job.</p><button className="h3-debug-toggle" type="button" onClick={() => setShowDebugPrompt((value) => !value)}>{showDebugPrompt ? 'Hide final prompt' : 'Show final prompt'}</button>{showDebugPrompt && <pre className="h3-final-prompt">{remoteJob?.finalEnhancedPrompt ?? 'Waiting for MiniMaxH3PromptEnhancer output.'}</pre>}</section>
         <H3ReferenceContractInspector job={remoteJob} />
         <H3PromptEngineInspector configured={promptEngine} job={remoteJob} />
         <H3History records={h3History} activeId={generatedRecordId} onReopen={reopen} />
@@ -595,12 +625,12 @@ function PromptEngineSettings({ status, testing, onRefresh }: { status: H3Prompt
   const snapshot = promptEngineStatusSnapshot(status);
   return (
     <section className="h3-section h3-prompt-engine">
-      <H3SectionHeading title="Prompt Engine" note="LM Studio on the China PC owns runtime configuration." />
+      <H3SectionHeading title="Prompt Engine" note="LM Studio on this PC owns runtime configuration." />
       <div className="h3-engine-status">
         <span className={`h3-status-dot ${status?.qwenReady ? 'ready' : status ? 'error' : 'checking'}`} />
         <div>
           <strong>Prompt Engine {snapshot.status}</strong>
-          <small>{status?.error ?? 'Checking qwen/qwen3.8-27b through the remote ComfyUI bridge.'}</small>
+          <small>{status?.error ?? 'Checking qwen/qwen3.8-27b through local ComfyUI.'}</small>
         </div>
         <button className="button secondary small" type="button" onClick={onRefresh} disabled={testing}>
           <RefreshCw size={14} className={testing ? 'spin' : ''} />{testing ? 'Checking…' : 'Test Prompt Engine'}
@@ -641,10 +671,10 @@ function RemoteH3Status({ job: inputJob, onOpenOutput, onDownloadResult, onOpenR
     : inputJob as ComputeJobState;
   const successStages = ['PREPARING', 'UPLOADING_REFERENCES', 'WRITING_PROMPT', 'VALIDATING_PROMPT', 'UNLOADING_LLM', 'QUEUED_H3', 'GENERATING_H3', 'RELEASING_H3_VRAM', 'DOWNLOADING', 'COMPLETE'] as const;
   const currentIndex = job?.pipelineStage ? successStages.indexOf(job.pipelineStage as (typeof successStages)[number]) : -1;
-  const statusLabel = job?.pipelineStage?.replaceAll('_', ' ') ?? 'READY';
+  const statusLabel = localRuntimeMessage(job?.pipelineStage?.replaceAll('_', ' ') ?? 'READY');
   const remoteStateLost = job?.failureStage === 'REMOTE_STATE_LOST' || job?.pipelineStage === 'REMOTE_STATE_LOST' || job?.h3LifecycleDiagnostics?.remoteLifecycleState === 'REMOTE_STATE_LOST';
   const videoOutput = job?.outputs.find((output) => output.kind === 'video' && output.nodeId === '92') ?? job?.outputs.find((output) => output.kind === 'video');
-  return <section className="h3-status-card"><div className="h3-rail-heading"><div><span className="eyebrow">Execution</span><h2>Remote job status</h2></div><span className={`h3-status-pill ${job?.status === 'failed' || job?.status === 'error' ? 'error' : job?.pipelineStage === 'COMPLETE' ? 'complete' : 'active'}`}>{statusLabel}</span></div><div className="h3-stage-list">{successStages.map((stage, index) => <div className={`h3-stage ${index <= currentIndex ? 'done' : ''} ${job?.pipelineStage === stage ? 'current' : ''}`} key={stage}><span>{index < currentIndex || job?.pipelineStage === 'COMPLETE' && stage === 'COMPLETE' ? '✓' : index + 1}</span><strong>{stage.replaceAll('_', ' ')}</strong></div>)}</div>{job?.failureStage && <div className="h3-failure-stage"><strong>{job.failureStage.replaceAll('_', ' ')}</strong><span>{job.error ?? job.downloadError ?? 'The pipeline stopped at this stage.'}</span></div>}{job && <div className="h3-job-meta"><span>Local Job ID</span><strong>{job.localJobId ?? '—'}</strong>{job.remotePromptId && <><span>ComfyUI prompt UUID</span><strong>{job.remotePromptId}</strong></>}{job.lmStudioModelId && <><span>Qwen model</span><strong>{job.lmStudioModelId}</strong></>}{job.repairAttemptsUsed !== undefined && job.repairAttemptsUsed !== null && <><span>Repair attempts</span><strong>{job.repairAttemptsUsed}</strong></>}{job.validationReport && <><span>Validation</span><strong>{job.failureStage === 'PROMPT_VALIDATION_FAILED' ? 'Failed' : 'Passed'}</strong></>}{job.stageTimings?.WRITING_PROMPT !== undefined && <><span>Rewrite time</span><strong>{formatStageTime(job.stageTimings.WRITING_PROMPT)}</strong></>}{job.llmUnloadRequested !== undefined && <><span>Qwen unload</span><strong>{job.llmUnloadSucceeded === true ? 'Verified' : job.llmUnloadError ?? 'Pending'}</strong></>}{remoteStateLost ? <><span>H3 VRAM release</span><strong>Not applicable — remote execution lost</strong></> : job.h3VramReleaseRequested !== undefined && <><span>H3 VRAM release</span><strong>{job.h3VramReleaseDurationMs == null ? 'Pending' : job.h3VramReleaseSucceeded === true ? 'Verified' : job.h3VramReleaseSucceeded === false ? 'Failed' : 'Unverified'}</strong></>}{!remoteStateLost && job.h3VramReleaseDurationMs != null && <><span>VRAM release time</span><strong>{formatStageTime(job.h3VramReleaseDurationMs)}</strong></>}{job.queueRemaining !== null && <><span>Queue remaining</span><strong>{job.queueRemaining}</strong></>}{job.progress !== null && <><span>{remoteStateLost ? 'Last observed H3 progress' : 'H3 progress'}</span><strong>{Math.round(job.progress * 100)}%</strong></>}</div>}{job?.h3VramReleaseError && !remoteStateLost && <p className="h3-warning">{job.h3VramReleaseError}</p>}{job?.connectionError && <p className="h3-warning">Live ComfyUI connection interrupted; polling will continue.</p>}{job?.error && !job.failureStage && <p className="h3-error">{job.error}</p>}{videoOutput && <div className="h3-output-actions"><button type="button" onClick={() => onOpenOutput(videoOutput)}><ExternalLink size={13} />Open remote</button><button type="button" onClick={onDownloadResult} disabled={job.status !== 'completed' || job.pipelineStage === 'RELEASING_H3_VRAM' || job.pipelineStage === 'DOWNLOADING'}><Download size={13} />Download result</button></div>}{job?.localResultPath && <button className="h3-result-link" type="button" onClick={onOpenResult}><ExternalLink size={13} />Open downloaded result</button>}</section>;
+  return <section className="h3-status-card"><div className="h3-rail-heading"><div><span className="eyebrow">Execution</span><h2>Local job status</h2></div><span className={`h3-status-pill ${job?.status === 'failed' || job?.status === 'error' ? 'error' : job?.pipelineStage === 'COMPLETE' ? 'complete' : 'active'}`}>{statusLabel}</span></div><div className="h3-stage-list">{successStages.map((stage, index) => <div className={`h3-stage ${index <= currentIndex ? 'done' : ''} ${job?.pipelineStage === stage ? 'current' : ''}`} key={stage}><span>{index < currentIndex || job?.pipelineStage === 'COMPLETE' && stage === 'COMPLETE' ? '✓' : index + 1}</span><strong>{localRuntimeMessage(stage.replaceAll('_', ' '))}</strong></div>)}</div>{job?.failureStage && <div className="h3-failure-stage"><strong>{localRuntimeMessage(job.failureStage.replaceAll('_', ' '))}</strong><span>{localRuntimeMessage(job.error ?? job.downloadError ?? 'The pipeline stopped at this stage.')}</span></div>}{job && <div className="h3-job-meta"><span>Local Job ID</span><strong>{job.localJobId ?? '—'}</strong>{job.remotePromptId && <><span>ComfyUI prompt UUID</span><strong>{job.remotePromptId}</strong></>}{job.lmStudioModelId && <><span>Qwen model</span><strong>{job.lmStudioModelId}</strong></>}{job.repairAttemptsUsed !== undefined && job.repairAttemptsUsed !== null && <><span>Repair attempts</span><strong>{job.repairAttemptsUsed}</strong></>}{job.validationReport && <><span>Validation</span><strong>{job.failureStage === 'PROMPT_VALIDATION_FAILED' ? 'Failed' : 'Passed'}</strong></>}{job.stageTimings?.WRITING_PROMPT !== undefined && <><span>Rewrite time</span><strong>{formatStageTime(job.stageTimings.WRITING_PROMPT)}</strong></>}{job.llmUnloadRequested !== undefined && <><span>Qwen unload</span><strong>{job.llmUnloadSucceeded === true ? 'Verified' : localRuntimeMessage(job.llmUnloadError ?? 'Pending')}</strong></>}{remoteStateLost ? <><span>H3 VRAM release</span><strong>Not applicable — local execution state lost</strong></> : job.h3VramReleaseRequested !== undefined && <><span>H3 VRAM release</span><strong>{job.h3VramReleaseDurationMs == null ? 'Pending' : job.h3VramReleaseSucceeded === true ? 'Verified' : job.h3VramReleaseSucceeded === false ? 'Failed' : 'Unverified'}</strong></>}{!remoteStateLost && job.h3VramReleaseDurationMs != null && <><span>VRAM release time</span><strong>{formatStageTime(job.h3VramReleaseDurationMs)}</strong></>}{job.queueRemaining !== null && <><span>Queue remaining</span><strong>{job.queueRemaining}</strong></>}{job.progress !== null && <><span>{remoteStateLost ? 'Last observed H3 progress' : 'H3 progress'}</span><strong>{Math.round(job.progress * 100)}%</strong></>}</div>}{job?.h3VramReleaseError && !remoteStateLost && <p className="h3-warning">{localRuntimeMessage(job.h3VramReleaseError)}</p>}{job?.connectionError && <p className="h3-warning">Local ComfyUI connection interrupted; polling will continue.</p>}{job?.error && !job.failureStage && <p className="h3-error">{localRuntimeMessage(job.error)}</p>}{videoOutput && <div className="h3-output-actions"><button type="button" onClick={() => onOpenOutput(videoOutput)}><ExternalLink size={13} />Open in ComfyUI</button><button type="button" onClick={onDownloadResult} disabled={job.status !== 'completed' || job.pipelineStage === 'RELEASING_H3_VRAM' || job.pipelineStage === 'DOWNLOADING'}><Download size={13} />Download result</button></div>}{job?.localResultPath && <button className="h3-result-link" type="button" onClick={onOpenResult}><ExternalLink size={13} />Open downloaded result</button>}</section>;
 }
 
 function H3History({ records, activeId, onReopen }: { records: H3PromptRecord[]; activeId: number | null; onReopen: (record: H3PromptRecord) => void }) {
@@ -670,3 +700,4 @@ function ReferenceSlot({ slot, asset, product, onSourceChange, onDescriptionChan
 function H3SectionHeading({ title, note }: { title: string; note: string }) {
   return <div className="h3-section-heading"><h2>{title}</h2><small>{note}</small></div>;
 }
+

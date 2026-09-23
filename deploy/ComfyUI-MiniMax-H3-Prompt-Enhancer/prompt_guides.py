@@ -1144,10 +1144,21 @@ def _dialogue_authoring_request(source_prompt: str, override_language: str = "au
             return False
         return not re.search(r"[.!?;]", source[match.end():min(following)])
 
+    def has_speaking_subject(match: re.Match[str]) -> bool:
+        start = max(source.rfind(mark, 0, match.start()) for mark in ".!?;") + 1
+        return bool(re.search(
+            r"\b(?:man|woman|boy|girl|person|character|creator|narrator|voice|he|she|they)\b",
+            source[start:match.start()], re.IGNORECASE,
+        ))
+
     direct = [match for match in _DIALOGUE_AUTHORING_RE.finditer(source) if not negated(match)]
     unscripted = [
         match for match in _UNSCRIPTED_SPEECH_RE.finditer(source)
         if not negated(match) and not already_scripted(match)
+        and (
+            not re.fullmatch(r"describes?|reports?|comments?", match.group(0), re.IGNORECASE)
+            or has_speaking_subject(match)
+        )
     ]
     if not direct and (_DIALOGUE_PROHIBITION_RE.search(source) or not unscripted):
         return False, "Original language"
@@ -3006,6 +3017,17 @@ def _omitted_appearance_attributes(source_prompt: str, output: str) -> list[str]
     for fragment in re.finditer(
         rf"\b(?:{_APPEARANCE_INTRODUCERS})\s+([^.;!?]{{0,160}})", source, flags=re.IGNORECASE,
     ):
+        # An introducer alone is not an appearance fact. Long structured briefs contain
+        # instructions such as "with words such as ..." and "with no invented label";
+        # those must not become required attributes of an imaginary character.
+        clause_start = max(source.rfind(mark, 0, fragment.start()) for mark in ".;!?\n") + 1
+        lead = source[clause_start:fragment.start()]
+        if not re.search(
+            r"\b(?:man|woman|boy|girl|person|people|character|guy|lady|figure|"
+            r"hombre|mujer|chico|chica|persona|he|she|they|his|her|their)\b",
+            lead, flags=re.IGNORECASE,
+        ):
+            continue
         for part in re.split(r",|\band\b|\by\b", fragment.group(1), flags=re.IGNORECASE):
             # "a huge tortoise shell on his back" is a shell, not a back: where the thing sits is
             # not the thing, and the body part it sits on is what the head-noun rule would take.
@@ -3025,7 +3047,8 @@ def _omitted_appearance_attributes(source_prompt: str, output: str) -> list[str]
     # A bare appositive carries no introducer at all -- "a very old man, bald, with ..." -- and is
     # exactly the kind of single distinctive word that goes missing without one.
     for appositive in re.finditer(
-        rf"\b(?:{'|'.join(sorted(_APPEARANCE_STOP_NOUNS))})\s*,\s*([\wÀ-ÿ'’-]+)\s*,",
+        r"\b(?:man|woman|boy|girl|person|character|guy|lady|figure|"
+        r"hombre|mujer|chico|chica|persona)\s*,\s*([\wÀ-ÿ'’-]+)\s*,",
         source, flags=re.IGNORECASE,
     ):
         head = appositive.group(1).casefold()

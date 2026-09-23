@@ -159,7 +159,7 @@ export const h3PromptEngineSettingsSchema = z.object({
 export const appSettingsSchema = z.object({
   chatGptUrl: z.string().url().refine((url) => url.startsWith('https://'), 'ChatGPT URL must use HTTPS'),
   computeMode: z.enum(computeModes),
-  remoteComfyUrl: z.string().url().refine((url) => url.startsWith('https://'), 'Remote ComfyUI URL must use HTTPS'),
+  remoteComfyUrl: z.literal('http://127.0.0.1:8188'),
   remoteComfyWorkflowPath: z.string(),
   remoteOutputDirectory: z.string().min(1),
   remoteAutoDownload: z.boolean(),

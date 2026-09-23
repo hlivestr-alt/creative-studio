@@ -65,9 +65,9 @@ describe('ComputeService job reconciliation', () => {
     }
   });
 
-  it('keeps the supplied production system-prompt SHA unchanged', () => {
+  it('pins the production system prompt including the explicit speech-mode repair rules', () => {
     const prompt = readExactSystemPrompt(join(process.cwd(), 'prompts', 'minimax-h3-lmstudio-system.md'));
-    expect(prompt.hash).toBe('267166287054ae853f25eadeaee73750be2fe874678c4a47adc2a4a1c15aaef2');
+    expect(prompt.hash).toBe('1cdf166a4826bb04ced5de18ce39a43a37fe38d7625c2b2f58a004cbca8871ff');
   });
 
   it('reloads changed defaults from the configured workflow file', () => {
@@ -125,9 +125,9 @@ describe('ComputeService job reconciliation', () => {
       workflowSettings: snapshot
     });
 
-    expect(request.workflowSettings).toMatchObject({ durationSeconds: 15, frameLength: 362 });
+    expect(request.workflowSettings).toMatchObject({ durationSeconds: 15, frameLength: 345 });
     expect(request.duration).toBe(15);
-    expect(request.frames).toBe(362);
+    expect(request.frames).toBe(345);
     expect(request.workflowSettings).not.toBe(snapshot);
   });
 
@@ -238,3 +238,4 @@ describe('ComputeService job reconciliation', () => {
     }
   });
 });
+

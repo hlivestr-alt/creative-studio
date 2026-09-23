@@ -95,26 +95,22 @@ describe('H3 product reference picker state', () => {
     const component = source.slice(start, end);
     expect(component).toContain("remoteLifecycleState === 'REMOTE_STATE_LOST'");
     expect(component).toContain('Last observed H3 progress');
-    expect(component).toContain('Not applicable — remote execution lost');
+    expect(component).toContain('Not applicable — local execution state lost');
     expect(component).toContain('job?.h3VramReleaseError && !remoteStateLost');
   });
 
-  it('shows authoritative runtime and database provenance in Advanced diagnostics', () => {
+  it('shows the simplified local service status and fixed archive', () => {
     const source = readFileSync(join(process.cwd(), 'src', 'ui', 'AutoH3Panel.tsx'), 'utf8');
     for (const label of [
-      'RUNNING EXECUTABLE', 'BUILD TIMESTAMP', 'APP VERSION / BUILD ID', 'APP.ASAR SHA-256',
-      'USER DATA DIRECTORY', 'ACTIVE DATABASE PATH', 'DATABASE SCHEMA VERSION',
-      'CURRENT AUTO SESSION ID', 'CURRENT AUTO JOB ID', 'CURRENT COMPUTE JOB ID', 'CURRENT COMFY PROMPT ID'
+      'LOCAL ENGINE', 'Runner', 'ComfyUI', 'LM Studio', 'Overall', 'Archive:', 'D:\\AI Videos', 'START AUTO RUN'
     ]) expect(source).toContain(label);
   });
 
-  it('shows the fresh lifecycle inputs and release decision in Auto Run diagnostics', () => {
+  it('removes development lifecycle and artifact syncing controls from the normal Auto Run UI', () => {
     const source = readFileSync(join(process.cwd(), 'src', 'ui', 'AutoH3Panel.tsx'), 'utf8');
-    for (const label of [
-      'Live lifecycle decision', 'Queue sample', 'Queue sample timestamp', 'Queue request URL', 'Queue freshness',
-      'History sample', 'History sample timestamp', 'History request URL', 'History freshness', 'Completion evidence',
-      'Classifier', 'Classifier timestamp', 'Release authorization', '/free attempted'
-    ]) expect(source).toContain(label);
+    for (const label of ['Live lifecycle decision', 'Download Verified', 'Stage Session', 'Local Output Root']) expect(source).not.toContain(label);
+    expect(source).toContain('STOP AFTER CURRENT');
+    expect(source).toContain('STOP NOW');
   });
 
   it('shows Verified only when fresh measured free VRAM passes the persisted threshold', () => {

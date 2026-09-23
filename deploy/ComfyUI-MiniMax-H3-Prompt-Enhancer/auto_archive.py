@@ -1,4 +1,4 @@
-"""Local China archive operations; never accepts a caller-selected source root."""
+"""Local archive operations; never accepts a caller-selected source root."""
 from __future__ import annotations
 
 import os
@@ -28,7 +28,7 @@ def within(root: Path, value: str) -> Path:
 def check_root(requested: str) -> Path:
     root = archive_root()
     if Path(requested).resolve() != root:
-        raise ValueError("Archive root must match China PROYA_H3_ARCHIVE_ROOT configuration")
+        raise ValueError("Archive root must match the local PROYA_H3_ARCHIVE_ROOT configuration")
     root.mkdir(parents=True, exist_ok=True)
     probe = root / (".proya-write-" + uuid.uuid4().hex)
     try:

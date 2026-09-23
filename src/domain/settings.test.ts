@@ -1,12 +1,14 @@
 import { describe, expect, it } from 'vitest';
-import { chatGptHomeUrl, defaultRemoteComfyUrl, defaultSettings, getChatWorkspaceUrl, mergeSettings } from './settings';
+import { basename, join } from 'node:path';
+import { products } from './data';
+import { chatGptHomeUrl, defaultRemoteComfyUrl, defaultSettings, getChatWorkspaceUrl, mergeSettings, settingsForStorage } from './settings';
 import { captionModes } from './types';
 
 describe('settings defaults', () => {
   it('uses requested safe defaults', () => {
     const defaults = defaultSettings('C:/Studio');
     expect(defaults.chatGptUrl).toBe(chatGptHomeUrl);
-    expect(defaults.computeMode).toBe('local');
+    expect(defaults.computeMode).toBe('remote');
     expect(defaults.remoteComfyUrl).toBe(defaultRemoteComfyUrl);
     expect(defaults.remoteComfyWorkflowPath).toBe('C:/Studio/workflows/minimax-h3-api.json');
     expect(defaults.remoteOutputDirectory).toBe('C:/Studio/outputs');
@@ -50,11 +52,11 @@ describe('settings defaults', () => {
     expect(getChatWorkspaceUrl({ chatGptUrl: 'http://unsafe.test' })).toBe(chatGptHomeUrl);
   });
 
-  it('persists remote compute settings without changing the local default', () => {
+  it('migrates persisted compute settings to the fixed local engine', () => {
     const defaults = defaultSettings('C:/Studio');
     const stored = mergeSettings(defaults, { computeMode: 'remote', remoteComfyUrl: 'https://comfy.example.test', remoteComfyWorkflowPath: 'C:/workflows/h3-api.json' });
     expect(stored.computeMode).toBe('remote');
-    expect(stored.remoteComfyUrl).toBe('https://comfy.example.test');
+    expect(stored.remoteComfyUrl).toBe(defaultRemoteComfyUrl);
     expect(stored.remoteComfyWorkflowPath).toBe('C:/workflows/h3-api.json');
     expect(stored.h3PromptEngine).toEqual(defaults.h3PromptEngine);
   });
@@ -64,9 +66,45 @@ describe('settings defaults', () => {
     expect(mergeSettings(defaults, { remoteComfyWorkflowPath: '' }).remoteComfyWorkflowPath).toBe(defaults.remoteComfyWorkflowPath);
   });
 
-  it('rejects an insecure remote ComfyUI URL', () => {
+  it('rebinds a stale portable extraction workflow path without replacing a custom workflow', () => {
+    const defaults = defaultSettings('C:/Temp/current/resources');
+    expect(mergeSettings(defaults, { remoteComfyWorkflowPath: 'C:\\Temp\\previous\\resources/workflows/minimax-h3-api.json' }).remoteComfyWorkflowPath)
+      .toBe(defaults.remoteComfyWorkflowPath);
+    expect(mergeSettings(defaults, { remoteComfyWorkflowPath: 'C:/Custom/workflows/my-h3-api.json' }).remoteComfyWorkflowPath)
+      .toBe('C:/Custom/workflows/my-h3-api.json');
+  });
+
+  it('rebinds every product master from launch A to launch B and stores only logical bundled identities', () => {
+    const launchADirectory = String.raw`C:\Temp\AAA\resources\product-assets`;
+    const launchB = defaultSettings(String.raw`C:\Temp\BBB\resources`);
+    const resolved = mergeSettings(launchB, {
+      remoteComfyWorkflowPath: String.raw`C:\Temp\AAA\resources\workflows\minimax-h3-api.json`,
+      productAssetsDirectory: launchADirectory,
+      referencesDirectory: String.raw`C:\Temp\AAA\resources\references`,
+      h3SystemPromptPath: String.raw`C:\Temp\AAA\resources\prompts\minimax-h3-lmstudio-system.md`,
+      remoteOutputDirectory: String.raw`C:\Temp\AAA\resources\outputs`
+    });
+    expect(resolved.productAssetsDirectory).toBe(String.raw`C:\Temp\BBB\resources/product-assets`);
+    for (const product of products) {
+      const master = join(resolved.productAssetsDirectory, basename(product.imagePath.replaceAll('\\', '/')));
+      expect(master).toContain(join('Temp', 'BBB', 'resources', 'product-assets'));
+      expect(master).not.toContain(join('Temp', 'AAA', 'resources', 'product-assets'));
+    }
+    expect([...new Set(products.map(product => basename(product.imagePath)))].sort()).toEqual([
+      'cleanser.png', 'eye-cream.png', 'mask.png', 'serum.png', 'skin-cream.png', 'toner.png'
+    ]);
+    expect(settingsForStorage(resolved, launchB)).toMatchObject({
+      remoteComfyWorkflowPath: 'workflows/minimax-h3-api.json',
+      productAssetsDirectory: 'product-assets',
+      referencesDirectory: 'references',
+      h3SystemPromptPath: 'prompts/minimax-h3-lmstudio-system.md'
+    });
+  });
+
+  it('replaces every non-local ComfyUI URL', () => {
     const defaults = defaultSettings('C:/Studio');
-    expect(mergeSettings(defaults, { remoteComfyUrl: 'http://comfy.example.test' })).toEqual(defaults);
+    expect(mergeSettings(defaults, { remoteComfyUrl: 'http://comfy.example.test' }).remoteComfyUrl).toBe(defaultRemoteComfyUrl);
+    expect(mergeSettings(defaults, { remoteComfyUrl: 'https://comfy.example.test' }).remoteComfyUrl).toBe(defaultRemoteComfyUrl);
   });
 
   it('persists exact H3 workflow settings without storing references', () => {

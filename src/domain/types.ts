@@ -16,7 +16,7 @@ export const computeModes = ['local', 'remote'] as const;
 export type ComputeMode = (typeof computeModes)[number];
 export const computeModeOptions: ReadonlyArray<{ value: ComputeMode; label: string; description: string }> = [
   { value: 'local', label: 'Local (legacy)', description: 'Keep legacy non-autonomous compute behavior for development and troubleshooting.' },
-  { value: 'remote', label: 'Remote', description: 'Submit an API-format H3 workflow to the configured remote ComfyUI PC.' }
+  { value: 'remote', label: 'Local engine', description: 'Submit the API-format H3 workflow to ComfyUI on this PC.' }
 ];
 
 export interface RemoteComfySystemInfo {
@@ -72,7 +72,7 @@ export const h3PromptEngineProductionDefaults = {
 /** Settings for the fixed Qwen instance reached only through the ComfyUI node. */
 export interface H3PromptEngineSettings {
   provider: 'lmstudio-remote';
-  /** Loopback endpoint on the China execution PC, never called by the laptop. */
+  /** Loopback endpoint on this PC. */
   endpoint: string;
   /** Fixed canonical model ID; retained in the contract but never user-editable. */
   model: string;
@@ -150,10 +150,12 @@ export interface H3ReferenceBinding extends H3GenerationBriefReference {
 /** Intermediate brief sent to MiniMaxH3PromptEnhancer; it is not final prompt text. */
 export interface H3GenerationBrief {
   schemaVersion: 1;
-  workflowMode: 'REF2VA';
+  workflowMode: 'T2VA' | 'REF2VA';
   product: ProductId;
   contentType: H3ContentType;
   contentFamily: H3ContentType;
+  /** Internal Hook variation, selected once by the job scheduler. */
+  hookArchetype?: import('./hook-archetype').HookArchetype;
   duration: number;
   aspectRatio: H3WorkflowAspectRatio;
   language: Language;
@@ -170,6 +172,9 @@ export interface H3GenerationBrief {
   subtitles: boolean;
   sound: H3Sound;
   specialInstructions: string;
+  /** Speech intent derived only from the user's original direction, never from defaults or a genome. */
+  speechMode?: 'none' | 'visible-dialogue' | 'voiceover';
+  speechRequest?: string;
 }
 
 /**
@@ -473,8 +478,10 @@ export const h3WorkflowAspectRatioValues = ['1:1', '2:3', '3:2', '3:4', '4:3', '
 export type H3WorkflowAspectRatio = (typeof h3WorkflowAspectRatioValues)[number];
 /** Includes the legacy Custom value so older saved H3 records can still be read. */
 export type H3AspectRatio = H3WorkflowAspectRatio | 'Custom';
-export const h3ContentTypes = ['Cinematic Product Ad', 'UGC Content', 'Product Demo', 'Product B-Roll', 'Product Transformation', 'Educational', 'Ingredient / Texture', 'Custom'] as const;
-export type H3ContentType = (typeof h3ContentTypes)[number];
+/** Active choices; legacy names remain in H3ContentType for persisted history. */
+export const h3ContentTypes = ['Hook', 'Benefits', 'Ingredients', 'Product', 'Support B-Roll', 'CTA / End Card'] as const;
+export const legacyH3ContentTypes = ['Cinematic Product Ad', 'UGC Content', 'Product Demo', 'Product B-Roll', 'Product Transformation', 'Educational', 'Ingredient / Texture', 'Custom'] as const;
+export type H3ContentType = (typeof h3ContentTypes)[number] | (typeof legacyH3ContentTypes)[number];
 export const creativeDiversityFallbackReasons = ['compatible_pool_exhausted', 'novelty_threshold_missed'] as const;
 export type CreativeDiversityFallbackReason = (typeof creativeDiversityFallbackReasons)[number];
 
@@ -676,6 +683,8 @@ export interface H3RecommendedSettings {
 }
 
 export interface H3VideoBrief {
+  /** Local, independent end-card renderer settings; never passed to H3. */
+  cta?: import('./cta-settings').CtaSettings;
   product: ProductId;
   /** Optional for backward compatibility with H3 records created before content types were added. */
   contentType?: H3ContentType;
@@ -685,6 +694,8 @@ export interface H3VideoBrief {
   creativeSeed?: number;
   /** The selected creative execution; it never replaces product truth. */
   creativeGenome?: CreativeGenome | null;
+  /** Internal only; never exposed as a visible content type. */
+  hookArchetype?: import('./hook-archetype').HookArchetype;
   videoIdea: string;
   language: Language;
   musicOnly: boolean;

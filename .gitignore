@@ -6,7 +6,11 @@ release/
 release-build-check*/
 release-token-managed/
 release-verify/
-deploy/china-*/
+deploy/local-runner-*/
+dist-local-runner/
+.portable-build/
+/PROYA-Creative-Studio.exe
+/runtime/runner/node.exe
 deploy/patch-check-*/
 deploy/creative-studio-app/
 *.log

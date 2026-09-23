@@ -4,7 +4,7 @@ import { createHash, randomInt, randomUUID } from 'node:crypto';
 import { existsSync, mkdirSync, readFileSync, realpathSync, renameSync, statSync, unlinkSync, writeFileSync } from 'node:fs';
 import { extname, isAbsolute, join, relative, resolve } from 'node:path';
 import { prepareH3ComfyWorkflow, type ComfyApiWorkflow } from '../../src/domain/comfy-workflow';
-import { isValidH3PromptEngineEndpoint, minimaxH3ReferenceSlotMappings, normalizeAutonomousH3PromptEngineSettings, validateMiniMaxH3ApiWorkflowTemplate, validateMiniMaxH3GenerationRequest, type H3Resolution } from '../../src/domain/minimax-h3-workflow';
+import { deriveMiniMaxH3T2VAWorkflowTemplate, isValidH3PromptEngineEndpoint, minimaxH3ReferenceSlotMappings, normalizeAutonomousH3PromptEngineSettings, validateMiniMaxH3ApiWorkflowTemplate, validateMiniMaxH3GenerationRequest, validateMiniMaxH3T2VAApiWorkflowTemplate, type H3Resolution } from '../../src/domain/minimax-h3-workflow';
 import { maxLocalReferenceUploadBytes } from './reference-authorization';
 import {
   h3PromptEngineModelId,
@@ -148,7 +148,7 @@ export function isCanonicalComfyPromptId(value: unknown): value is string {
 }
 
 function requireCanonicalComfyPromptId(value: unknown): string {
-  if (!isCanonicalComfyPromptId(value)) throw new Error('ComfyUI did not return a canonical prompt UUID. The remote job cannot be tracked safely.');
+  if (!isCanonicalComfyPromptId(value)) throw new Error('ComfyUI did not return a canonical prompt UUID. The local job cannot be tracked safely.');
   return value;
 }
 
@@ -282,7 +282,7 @@ export function parsePromptEngineDiscovery(payload: unknown): PromptEngineDiscov
   ].map(asString).find((value): value is string => Boolean(value)) ?? null : null;
   const routeError = asString(record.error);
   const error = routeError
-    ?? (observedModelId ? null : `${h3PromptEngineModelId} is not available in LM Studio on the remote PC.`);
+    ?? (observedModelId ? null : `${h3PromptEngineModelId} is not available in LM Studio on this PC.`);
   return { models: targetAvailable ? [h3PromptEngineModelId] : [], observedModelId, observedInstanceId, error };
 }
 
@@ -764,7 +764,7 @@ export class LocalComputeProvider implements ComputeProvider {
   readonly mode = 'local' as const;
 
   async testConnection(): Promise<RemoteComfySystemInfo> {
-    return { connected: false, url: '', comfyVersion: null, gpuName: null, vramTotalBytes: null, vramFreeBytes: null, latencyMs: null, error: 'Local mode does not use a remote ComfyUI server.' };
+    return { connected: false, url: '', comfyVersion: null, gpuName: null, vramTotalBytes: null, vramFreeBytes: null, latencyMs: null, error: 'ComfyUI is unavailable.' };
   }
 
   async testPromptEngine(settings: H3PromptEngineSettings): Promise<H3PromptEngineStatus> {
@@ -772,11 +772,11 @@ export class LocalComputeProvider implements ComputeProvider {
   }
 
   async submitH3(): Promise<ComputeJobState> {
-    throw new Error('Local mode is not used for autonomous H3 generation; use the remote ComfyUI execution plane.');
+    throw new Error('This compute mode is not used for autonomous H3 generation.');
   }
 
   async getJobState(): Promise<ComputeJobState> {
-    throw new Error('Local mode has no remote ComfyUI jobs.');
+    throw new Error('This compute mode has no ComfyUI jobs.');
   }
 
   watchJob(): () => void {
@@ -784,16 +784,16 @@ export class LocalComputeProvider implements ComputeProvider {
   }
 
   getOutputUrl(): string {
-    throw new Error('Local mode has no remote output URL.');
+    throw new Error('This compute mode has no output URL.');
   }
 
   async downloadOutput(): Promise<ComfyDownloadResult> {
-    throw new Error('Local mode has no remote output to download.');
+    throw new Error('This compute mode has no output to download.');
   }
 
   async assertQueueIdle(): Promise<void> { throw new Error('Local mode has no ComfyUI queue.'); }
   async recoverStaleQwen(): Promise<QwenRecoveryAudit> { throw new Error('Local mode has no LM Studio prompt engine.'); }
-  async inspectH3Lifecycle(): Promise<H3RemoteLifecycleInspection> { throw new Error('Local mode has no remote ComfyUI lifecycle.'); }
+  async inspectH3Lifecycle(): Promise<H3RemoteLifecycleInspection> { throw new Error('This compute mode has no ComfyUI lifecycle.'); }
   async releaseH3Vram(): Promise<H3VramReleaseAudit> { throw new Error('Local mode has no H3 GPU.'); }
 }
 
@@ -864,7 +864,7 @@ export class RemoteComfyComputeProvider implements ComputeProvider {
       return { ...status, enhancerInstalled, validatorInstalled, requiredNodesInstalled: false, error: `Install ComfyUI-MiniMax-H3-Prompt-Enhancer and apply the Proya autonomous-H3 patch on the execution PC. Missing: ${missingPatchedNodes.join(', ')}` };
     }
     if (!hasPatchedPromptEngineSchema(objectInfo)) {
-      return { ...status, enhancerInstalled, validatorInstalled, requiredNodesInstalled: false, error: 'The remote H3 prompt nodes are installed with a stale schema. Apply the latest pinned Proya autonomous-H3 patch and restart ComfyUI before generating.' };
+      return { ...status, enhancerInstalled, validatorInstalled, requiredNodesInstalled: false, error: 'The local H3 prompt nodes are installed with a stale schema. Apply the latest pinned Proya autonomous-H3 patch and restart ComfyUI before generating.' };
     }
     try {
       const modelsPayload = await this.requestJson('/minimax_h3_prompt_enhancer/models', {
@@ -901,9 +901,9 @@ export class RemoteComfyComputeProvider implements ComputeProvider {
       onState?.(this.makeState(localJobId, null, status, { ...h3PromptEngineAudit(effectivePromptEngine), referenceUploads, ...overrides }));
     };
     try {
-      if (!this.workflowPath.trim()) throw new Error('Set an H3 API workflow file in Settings → Remote compute before submitting.');
+      if (!this.workflowPath.trim()) throw new Error('Set an H3 API workflow file in Settings before submitting.');
       const resolution = validateMiniMaxH3GenerationRequest(request);
-      const template = this.loadWorkflowTemplate(this.workflowPath);
+      const template = this.loadWorkflowTemplate(this.workflowPath, request.mode);
       publish('preparing', { pipelineStage: 'PREPARING' });
       await this.testConnection();
 
@@ -916,19 +916,19 @@ export class RemoteComfyComputeProvider implements ComputeProvider {
         const promptEngine = await this.testPromptEngine(autonomousPromptEngine);
         if (!promptEngine.requiredNodesInstalled || !promptEngine.enhancerInstalled || !promptEngine.validatorInstalled) {
           stage = 'PROMPT_GENERATION_FAILED';
-          throw new Error(promptEngine.error ?? 'The remote H3 prompt enhancer and validator are not installed.');
+          throw new Error(promptEngine.error ?? 'The local H3 prompt enhancer and validator are not installed.');
         }
         if (!promptEngine.lmStudioConnected) {
           stage = 'LLM_UNAVAILABLE';
-          throw new Error(promptEngine.error ?? 'The remote LM Studio Prompt Engine is not reachable.');
+          throw new Error(promptEngine.error ?? 'LM Studio unavailable.');
         }
         if (!promptEngine.observedModelId) {
           stage = 'LLM_UNAVAILABLE';
-          throw new Error(promptEngine.error ?? `${h3PromptEngineModelId} is not available in LM Studio on the remote PC.`);
+          throw new Error(promptEngine.error ?? `${h3PromptEngineModelId} is not available in LM Studio on this PC.`);
         }
         if (!promptEngine.qwenReady) {
           stage = 'LLM_UNAVAILABLE';
-          throw new Error(promptEngine.error ?? 'The remote LM Studio Prompt Engine did not return a usable Qwen model.');
+          throw new Error(promptEngine.error ?? 'LM Studio did not return a usable Qwen model.');
         }
         // Pass the fixed model to node 149; the remote node captures the exact
         // instance used after normal LM Studio JIT/autoload resolution.
@@ -1449,7 +1449,7 @@ export class RemoteComfyComputeProvider implements ComputeProvider {
     }
   }
 
-  private loadWorkflowTemplate(filePath: string): ComfyApiWorkflow {
+  private loadWorkflowTemplate(filePath: string, mode: RemoteH3GenerationRequest['mode']): ComfyApiWorkflow {
     const absolutePath = resolve(filePath);
     let parsed: unknown;
     try {
@@ -1457,8 +1457,11 @@ export class RemoteComfyComputeProvider implements ComputeProvider {
     } catch (reason) {
       throw new Error(`Could not read H3 API workflow ${absolutePath}: ${errorMessage(reason)}`, { cause: reason });
     }
-    validateMiniMaxH3ApiWorkflowTemplate(parsed);
-    return parsed as ComfyApiWorkflow;
+    if (mode === 'T2VA') {
+      try { return validateMiniMaxH3T2VAApiWorkflowTemplate(parsed); }
+      catch { return deriveMiniMaxH3T2VAWorkflowTemplate(parsed); }
+    }
+    return validateMiniMaxH3ApiWorkflowTemplate(parsed);
   }
 
   private prepareWorkflow(template: ComfyApiWorkflow, request: RemoteH3GenerationRequest, resolution: H3Resolution, references: { firstFrame: string | null; lastFrame: string | null; productReference: string | null; referenceImages: string[] }): ComfyApiWorkflow {

@@ -799,6 +799,11 @@ def enhance_prompt_with_completion(
         return valid_blockers, quality_blockers, contract_warnings, len(diagnostics)
 
     attempts = 0
+    source_speech_mode = "none" if "SPEECH MODE: NONE" in basic_prompt else (
+        "visible-dialogue" if "SPEECH MODE: VISIBLE DIALOGUE" in basic_prompt else (
+            "voiceover" if "SPEECH MODE: VOICEOVER" in basic_prompt else "unspecified"
+        )
+    )
     while repair_issues(validation) and attempts < int(repair_attempts):
         attempts += 1
         dialogue_authoring_repair = ""
@@ -808,7 +813,7 @@ def enhance_prompt_with_completion(
                 "additional spoken words:\n"
                 + "\n".join(f"- <d>[{language}] {text}</d>" for language, text in dialogue_ledger)
             )
-        elif any(
+        elif source_speech_mode != "none" and any(
             "explicit dialogue authoring request" in str(error).casefold()
             or "affirmative speaking cues outside" in str(error).casefold()
             for error in validation["errors"]
@@ -823,14 +828,37 @@ def enhance_prompt_with_completion(
                 "at each relevant beat. This requirement overrides the default rule against unrequested dialogue."
             )
         issues = repair_issues(validation)
+        speech_repair = (
+            "\nSOURCE SPEECH MODE IS NONE: The source did not request speech. Remove every invented "
+            "voiceover, narrator, speaker ID, <d> block, and quoted spoken phrase. Keep the visual "
+            "description and verified product facts; describe benefits and textures as unquoted prose."
+            if source_speech_mode == "none" else
+            "\nSOURCE SPEECH MODE IS VISIBLE DIALOGUE: Preserve the on-screen speaker and exact "
+            "source-authorized words. Every <d> block needs that speaker's stable (Sx) ID and an "
+            "explicit vocal action in the same sentence. Do not convert the speaker to voiceover."
+            if source_speech_mode == "visible-dialogue" else ""
+        )
+        coverage_repair = (
+            "\nQUALITY COVERAGE REPAIR: The corrected REF2VA detailed_description must contain at least "
+            "350 English words (aim for 370–400, count before returning). This is a shot-design brief, "
+            "not 350 words of spoken copy. Add only concrete, source-consistent information about the "
+            "declared reference's visible identity, spatial composition, continuous camera path, "
+            "physical texture behavior, lighting continuity, and causal action. Do not add dialogue, "
+            "new benefit claims, written text, extra shots, or filler."
+            if any("adaptive soft baseline" in str(gap) for gap in validation.get("coverageGaps", ()))
+            else ""
+        )
         messages = [*base_messages,
             {"role": "assistant", "content": enhanced},
             {"role": "user", "content": (
-                "Repair the prompt. Return the complete corrected prompt only. Preserve all source facts, exact "
-                "quoted content, reference roles, and resolved style fields. Follow the selected mode's exact output "
+                "Repair only the invalid portions of the prompt. Return the complete corrected prompt only. "
+                "Preserve all source facts, source-authorized literal quoted content, reference roles, "
+                "and resolved style fields. Do not preserve invented quotes or speech. Follow the selected mode's exact output "
                 "contract and active enhancement profile. Fix these structural, fidelity, or coverage issues:\n- "
                 + "\n- ".join(issues)
                 + dialogue_authoring_repair
+                + speech_repair
+                + coverage_repair
             )},
         ]
         enhanced = normalize_candidate(completion(messages))

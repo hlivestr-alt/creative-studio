@@ -14,6 +14,8 @@ import {
 } from './types';
 import { collectH3WorkflowPlaceholders, h3ReferenceImageSlotLimit, parseComfyApiWorkflow, type ComfyWorkflowInput, type ComfyApiWorkflow } from './comfy-workflow';
 import bundledMinimaxH3WorkflowTemplate from '../../workflows/minimax-h3-api.json';
+import { isNoProductVideo } from './support-b-roll';
+import { calculateH3FrameLength } from './h3';
 
 export interface H3Resolution {
   selectorValue: string;
@@ -183,6 +185,83 @@ export function validateMiniMaxH3ApiWorkflowTemplate(value: unknown): ComfyApiWo
   return workflow;
 }
 
+const minimaxH3T2VARequiredPlaceholders = [...new Set(minimaxH3WorkflowMappings
+  .filter(({ placeholder }) => !['{{H3_REF_IMAGE_SIZE}}', '{{H3_REF_IMAGE_0}}', '{{H3_REF_IMAGE_1}}'].includes(placeholder))
+  .map(({ placeholder }) => placeholder))].sort();
+
+/** Validates the additive text-only graph while leaving the proven Ref2VA contract untouched. */
+export function validateMiniMaxH3T2VAApiWorkflowTemplate(value: unknown): ComfyApiWorkflow {
+  const workflow = parseComfyApiWorkflow(value);
+  if (JSON.stringify(collectH3WorkflowPlaceholders(workflow)) !== JSON.stringify(minimaxH3T2VARequiredPlaceholders)) {
+    throw workflowError('T2VA placeholder contract differs from the supported MiniMax H3 mappings');
+  }
+  for (const mapping of minimaxH3WorkflowMappings.filter(({ placeholder }) => !['{{H3_REF_IMAGE_SIZE}}', '{{H3_REF_IMAGE_0}}', '{{H3_REF_IMAGE_1}}'].includes(placeholder))) {
+    const node = workflow[mapping.nodeId];
+    if (!node || node.class_type !== mapping.classType) throw workflowError(`expected node ${mapping.nodeId} to be ${mapping.classType} for ${mapping.placeholder}`);
+    const input = node.inputs[mapping.inputName];
+    if (typeof input !== 'string' || !input.includes(mapping.placeholder)) throw workflowError(`expected ${mapping.placeholder} at node ${mapping.nodeId} input ${mapping.inputName}`);
+  }
+  const h3Node = workflow['136'];
+  if (!h3Node || h3Node.class_type !== 'MiniMaxH3ImageToVideo') throw workflowError('expected T2VA node 136 to be MiniMaxH3ImageToVideo');
+  const requiredLinks: ReadonlyArray<[string, string, number]> = [
+    ['prompt', '151', 0], ['width', '115', 0], ['height', '115', 1], ['length', '131', 1], ['clip', '128', 0], ['vae', '119', 0]
+  ];
+  for (const [inputName, sourceNode, outputIndex] of requiredLinks) {
+    if (!isLink(h3Node.inputs[inputName], sourceNode, outputIndex)) throw workflowError(`T2VA node 136 input ${inputName} must remain linked to node ${sourceNode} output ${outputIndex}`);
+  }
+  if ('first_frame' in h3Node.inputs || 'last_frame' in h3Node.inputs || Object.keys(h3Node.inputs).some(name => name.startsWith('ref_'))) {
+    throw workflowError('T2VA node 136 must not contain frame or reference inputs');
+  }
+  const diffusion = workflow['127'];
+  if (!diffusion || diffusion.class_type !== 'UNETLoader' || diffusion.inputs.unet_name !== 'minimax_h3_fl2va_pruned_int8_convrot.safetensors') {
+    throw workflowError('T2VA node 127 must load the matching FL2VA pruned INT8 ConvRot model');
+  }
+  const enhancer = workflow['149'];
+  if (!enhancer || enhancer.class_type !== 'MiniMaxH3PromptEnhancer' || enhancer.inputs.mode !== 't2va'
+    || !isLink(enhancer.inputs.basic_prompt, '147', 0) || !isLink(enhancer.inputs.reference_context, '148', 0)
+    || !isLink(enhancer.inputs.media_manifest, '153', 0)) throw workflowError('T2VA node 149 must preserve the prompt-engine chain in t2va mode');
+  const validator = workflow['150'];
+  if (!validator || validator.class_type !== 'MiniMaxH3PromptValidator' || validator.inputs.mode !== 't2va'
+    || !isLink(validator.inputs.prompt, '149', 0) || !isLink(validator.inputs.source_prompt, '147', 0)
+    || !isLink(validator.inputs.reference_context, '148', 0) || !isLink(validator.inputs.media_manifest, '153', 0)) throw workflowError('T2VA node 150 must preserve validation in t2va mode');
+  const gate = workflow['151'];
+  if (!gate || gate.class_type !== 'MiniMaxH3PromptValidityGate' || !isLink(gate.inputs.prompt, '152', 0)
+    || !isLink(gate.inputs.valid, '152', 1) || !isLink(gate.inputs.validation_report, '152', 2)
+    || !isLink(gate.inputs.unload_succeeded, '152', 3) || !isLink(gate.inputs.unload_error, '152', 4)) throw workflowError('T2VA must preserve the blocking validity gate after Qwen cleanup');
+  const unload = workflow['152'];
+  if (!unload || unload.class_type !== 'MiniMaxH3UnloadLMStudioModel' || !isLink(unload.inputs.prompt, '150', 0)
+    || !isLink(unload.inputs.valid, '150', 1) || !isLink(unload.inputs.validation_report, '150', 2)
+    || !isLink(unload.inputs.model, '149', 8) || !isLink(unload.inputs.instance_id, '149', 9)) throw workflowError('T2VA must preserve exact-instance Qwen unload before the validity gate');
+  const stepsSwitch = workflow['142'];
+  const sampler = workflow['125'];
+  const samplerSelector = workflow['123'];
+  const lightningToggle = workflow['146'];
+  if (!stepsSwitch || stepsSwitch.class_type !== 'ComfySwitchNode' || !isLink(stepsSwitch.inputs.switch, '146', 0) || !isLink(stepsSwitch.inputs.on_false, '143', 0) || !isLink(stepsSwitch.inputs.on_true, '144', 0)) throw workflowError('T2VA must preserve the steps switch');
+  if (!sampler || sampler.class_type !== 'SamplerCustomAdvanced' || !isLink(sampler.inputs.sigmas, '124', 0) || !isLink(sampler.inputs.sampler, '123', 0)) throw workflowError('T2VA must preserve the sampler graph');
+  if (!samplerSelector || samplerSelector.class_type !== 'KSamplerSelect' || samplerSelector.inputs.sampler_name !== 'res_multistep') throw workflowError('T2VA must preserve res_multistep sampling');
+  if (!lightningToggle || lightningToggle.class_type !== 'PrimitiveBoolean' || lightningToggle.inputs.value !== false) throw workflowError('T2VA must keep the unrelated Lightning LoRA branch disabled');
+  return workflow;
+}
+
+/** Derives the official core T2VA shape from the validated production graph. */
+export function deriveMiniMaxH3T2VAWorkflowTemplate(ref2vaTemplate: unknown): ComfyApiWorkflow {
+  const workflow = validateMiniMaxH3ApiWorkflowTemplate(ref2vaTemplate);
+  workflow['127'].inputs.unet_name = 'minimax_h3_fl2va_pruned_int8_convrot.safetensors';
+  workflow['136'] = {
+    ...workflow['136'],
+    class_type: 'MiniMaxH3ImageToVideo',
+    inputs: {
+      prompt: ['151', 0], width: ['115', 0], height: ['115', 1], length: ['131', 1], clip: ['128', 0], vae: ['119', 0]
+    },
+    _meta: { title: 'MiniMax H3 Text to Video' }
+  };
+  delete workflow['137'];
+  delete workflow['139'];
+  workflow['149'].inputs.mode = 't2va';
+  workflow['150'].inputs.mode = 't2va';
+  return validateMiniMaxH3T2VAApiWorkflowTemplate(workflow);
+}
+
 export interface H3StepsTrace {
   schedulerNodeId: string;
   schedulerClassType: string;
@@ -300,7 +379,7 @@ export function validateH3WorkflowSettings(settings: H3WorkflowSettings): H3Work
   validateH3Seed(settings.seed);
   if (!minimaxH3ReferenceImageSizeValues.includes(settings.refImageSize)) throw new Error('MiniMax H3 ref_image_size must be match or max.');
   const resolution = resolveH3Resolution(settings.aspectRatio, settings.megapixels, settings.multiple);
-  const frameLength = 5 + 17 * Math.ceil((settings.durationSeconds * settings.fps - 5) / 17);
+  const frameLength = calculateH3FrameLength(settings.durationSeconds);
   return {
     ...settings,
     frameLength,
@@ -372,10 +451,12 @@ export function buildH3WorkflowMappingInspection(settings: H3WorkflowSettingsSna
 export function validateMiniMaxH3GenerationRequest(request: RemoteH3GenerationRequest): H3Resolution {
   const hasAutonomousBrief = Boolean(request.generationBrief && request.generationBriefText?.trim());
   if (!hasAutonomousBrief && !request.prompt?.trim()) throw new Error('H3 generation requires a structured generation brief.');
-  if (request.mode !== 'REF2VA') throw new Error(`The configured workflow is MiniMax H3 Ref2VA, but the request resolved ${request.mode}. REF2VA is locked for this workflow.`);
+  const supportBRoll = isNoProductVideo(request.generationBrief?.contentType);
+  const expectedMode = supportBRoll ? 'T2VA' : 'REF2VA';
+  if (request.mode !== expectedMode) throw new Error(`The selected content requires MiniMax H3 ${expectedMode === 'REF2VA' ? 'Ref2VA' : 'T2VA'}, but the request resolved ${request.mode}.`);
   if (!Number.isFinite(request.duration) || request.duration < 4 || request.duration > 15) throw new Error('H3 duration must be between 4 and 15 seconds.');
   if (request.fps !== 24) throw new Error('The configured MiniMax H3 workflow requires 24 FPS.');
-  const expectedFrames = 5 + 17 * Math.ceil((request.duration * request.fps - 5) / 17);
+  const expectedFrames = calculateH3FrameLength(request.duration);
   if (!Number.isInteger(request.frames) || request.frames !== expectedFrames) throw new Error(`H3 frame count must be ${expectedFrames} for ${request.duration} seconds at 24 FPS.`);
   if (request.firstFrame || request.lastFrame || request.firstFramePath || request.lastFramePath) throw new Error('The configured Ref2VA workflow does not expose first-frame or last-frame inputs. Use a matching I2VA/FL2VA/L2VA API workflow for endpoint frames.');
   if (request.refImageSize !== undefined && !minimaxH3ReferenceImageSizeValues.includes(request.refImageSize)) throw new Error('MiniMax H3 ref_image_size must be match or max.');
@@ -386,7 +467,7 @@ export function validateMiniMaxH3GenerationRequest(request: RemoteH3GenerationRe
     validateH3PromptEngineSettings(request.promptEngine);
   }
   if (request.generationBrief) {
-    if (request.generationBrief.workflowMode !== 'REF2VA') throw new Error('The H3 generation brief must keep workflow mode REF2VA.');
+    if (request.generationBrief.workflowMode !== expectedMode) throw new Error(`The H3 generation brief must keep workflow mode ${expectedMode}.`);
     if (request.generationBrief.duration !== request.duration || request.generationBrief.aspectRatio !== request.aspectRatio) throw new Error('H3 generation brief target values do not match the direct workflow settings.');
     const expectedManifest = request.generationBrief.mediaManifest?.trim();
     if (!expectedManifest) throw new Error('The autonomous H3 generation brief is missing its authoritative media_manifest contract.');
@@ -414,8 +495,9 @@ export function validateMiniMaxH3GenerationRequest(request: RemoteH3GenerationRe
     const physicalPictureCount = referenceImages.length || (request.productReference?.trim() || request.productReferencePath?.trim() ? 1 : 0);
     if (declaredPictureCount !== physicalPictureCount) throw new Error(`H3 reference contract declares ${declaredPictureCount} connected picture(s), but ${physicalPictureCount} physical reference input(s) were supplied.`);
   }
-  if (request.generationBrief && !request.productReference?.trim() && !request.productReferencePath?.trim()) throw new Error('The autonomous Ref2VA workflow requires a product reference path for <Picture 1>.');
-  if (!referenceImages.length && !request.productReference?.trim() && !request.productReferencePath?.trim()) throw new Error('The configured Ref2VA workflow requires {{H3_REF_IMAGE_0}}, but no local or remote reference image is available.');
+  if (supportBRoll && (referenceImages.length || request.productReference?.trim() || request.productReferencePath?.trim())) throw new Error('Support B-Roll T2VA must not receive any product or reference image.');
+  if (request.generationBrief && !supportBRoll && !request.productReference?.trim() && !request.productReferencePath?.trim()) throw new Error('The autonomous Ref2VA workflow requires a product reference path for <Picture 1>.');
+  if (!supportBRoll && !referenceImages.length && !request.productReference?.trim() && !request.productReferencePath?.trim()) throw new Error('The configured Ref2VA workflow requires {{H3_REF_IMAGE_0}}, but no local or remote reference image is available.');
   return resolveH3Resolution(request.aspectRatio, request.megapixels, request.multiple);
 }
 

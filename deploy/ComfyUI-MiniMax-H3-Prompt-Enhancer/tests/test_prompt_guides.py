@@ -3215,6 +3215,32 @@ def test_a_worn_object_is_not_confused_with_the_body_part_it_sits_on():
     assert "back" not in dropped[0]
 
 
+def test_structured_product_instructions_are_not_character_appearance():
+    from prompt_guides import _omitted_appearance_attributes
+
+    source = (
+        "Describe progression chronologically with words such as begins, then, gradually, and finally.\n"
+        "Only the selected product may receive a reusable subject label; people, hands, props, "
+        "and environments remain ordinary prose.\n"
+        "Qwen owns the scene, action, lighting, camera, pacing, sound, and H3 syntax.\n"
+        "Preserve the product with no invented label, barcode, copy, or artwork.\n"
+        "Keep footage in the final prompt."
+    )
+    assert _omitted_appearance_attributes(source, "A cleanser rests on a vanity.") == []
+
+
+def test_visual_brief_instructions_do_not_authorize_dialogue():
+    from prompt_guides import _dialogue_authoring_request
+
+    source = (
+        "Dialogue language: Indonesian. Describe progression chronologically with words such as "
+        "begins, then, gradually, and finally. Do not generate subtitles or speech transcription. "
+        "When the validator reports an error, repair the final prompt in place."
+    )
+    assert _dialogue_authoring_request(source) == (False, "Original language")
+    assert _dialogue_authoring_request("A woman describes the cleanser benefits to camera.")[0]
+
+
 def test_enhanced_production_may_choose_how_things_look_but_not_what_exists():
     """The middle level enumerated what not to add, so anything unenumerated was fair game.
 

@@ -1,4 +1,4 @@
-"""Auto Run routes run on the China PC, alongside the existing prompt nodes."""
+"""Auto Run routes run on the local PC, alongside the existing prompt nodes."""
 import asyncio
 from pathlib import Path
 from aiohttp import web

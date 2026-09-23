@@ -4,13 +4,13 @@
 
 Creative Studio should treat Locked Product Plate as a shot-mode contract and compositing plan, not as another long packaging description in the H3 prompt.
 
-The current application has a local creative control plane and an autonomous MiniMax H3 Ref2VA ComfyUI execution path. That graph accepts the remote Qwen-produced prompt and product reference images and returns one generated video stream; it does not expose alpha, masks, a background-only output, a foreground layer, or a compositing node. The repository also has no FFmpeg dependency or existing media post-processing service.
+The current application has a local creative control plane and an autonomous MiniMax H3 Ref2VA ComfyUI execution path. That graph accepts the local Qwen-produced prompt and product reference images and returns one generated video stream; it does not expose alpha, masks, a background-only output, a foreground layer, or a compositing node. The repository also has no FFmpeg dependency or existing media post-processing service.
 
 The clean first implementation is therefore:
 
 1. Store a first-class shot mode in the H3 brief.
-2. Generate a short, deterministic plate plan in the H3GenerationBrief for the remote Qwen prompt engine.
-3. Keep the autonomous Remote Compute submission and existing H3 graph boundary unchanged.
+2. Generate a short, deterministic plate plan in the H3GenerationBrief for the local Qwen prompt engine.
+3. Keep the autonomous Local Engine submission and existing H3 graph boundary unchanged.
 4. Add a later compositor at the output boundary that consumes the plan, an approved product cutout, and the generated environment video.
 
 This preserves the current workflow while making the intended foreground/background responsibility explicit. It avoids asking H3 to reproduce packaging pixels that can be composited from the original asset.
@@ -24,7 +24,7 @@ This preserves the current workflow while making the intended foreground/backgro
 - `Opening Hero` — the original product image is locked during the opening hero beat.
 - `Final Hero` — the original product image is locked during the final hero beat.
 
-The field is optional when reading old saved H3 records. Legacy records normalize to `Off`, while new sessions store the selected value inside the existing brief JSON. No database schema migration or Remote Compute request change is required.
+The field is optional when reading old saved H3 records. Legacy records normalize to `Off`, while new sessions store the selected value inside the existing brief JSON. No database schema migration or Local Engine request change is required.
 
 The H3 setup exposes the mode in Advanced Settings. Choosing a non-off mode automatically assigns the selected product asset to the Product Reference role when no usable product image is assigned. Turning the mode off does not remove an existing reference selection.
 
@@ -71,7 +71,7 @@ anchor / scale / crop policy
 outputPath
 ```
 
-The first implementation deliberately does not bundle FFmpeg or pretend that the current Remote Compute graph returns separate layers. The prompt and plan are ready for that service, and the existing generated H3 video remains usable as the environment/action source until the service is added.
+The first implementation deliberately does not bundle FFmpeg or pretend that the current Local Engine graph returns separate layers. The prompt and plan are ready for that service, and the existing generated H3 video remains usable as the environment/action source until the service is added.
 
 ## Automatic recommendation
 
@@ -106,7 +106,7 @@ The H3 prompt remains concise. Product metadata still supplies verified physical
 
 ## Limitations
 
-- The current Remote Compute graph still produces one H3 video stream. It does not yet emit a background-only video, alpha channel, shadow pass, or final composite automatically.
+- The current Local Engine graph still produces one H3 video stream. It does not yet emit a background-only video, alpha channel, shadow pass, or final composite automatically.
 - The current implementation is workflow planning and prompt/output-mode support. A future compositor is required to turn the plan into a finished plate-composited video.
 - A front-facing plate is not a valid substitute for a real rotation. Rotating products still require H3 generation, multiple-angle references, or separately prepared angle plates.
 - Locked Product Plate is best for front-facing hero shots with minimal product motion and environmental animation around the product.
@@ -120,4 +120,4 @@ The H3 prompt remains concise. Product metadata still supplies verified physical
 - `src/domain/locked-product-plate.ts` — mode normalization, suitability recommendation, typed plan, and prompt block.
 - `src/domain/h3.ts` — retains legacy prompt helpers for older saved/image workflows; the autonomous H3 page uses `h3-generation-brief.ts` and does not call the ChatGPT helpers.
 - `src/ui/H3VideoPromptsPage.tsx` — mode selection, reference assignment, and recommendation display.
-- `workflows/minimax-h3-api.json` — unchanged existing Remote Compute graph.
+- `workflows/minimax-h3-api.json` — unchanged existing Local Engine graph.

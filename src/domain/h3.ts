@@ -39,7 +39,7 @@ export const H3_FPS = 24;
 export const H3_MIN_DURATION = 4;
 export const H3_MAX_DURATION = 15;
 
-export const h3ContentTypeOptions = h3ContentTypes;
+export const h3ContentTypeOptions: readonly H3ContentType[] = h3ContentTypes;
 export const h3LanguageOptions: readonly Language[] = ['Indonesian', 'English'];
 export const h3WorkflowOptions: ReadonlyArray<{ value: H3WorkflowMode; label: string; description: string }> = [
   { value: 'AUTO', label: 'Auto', description: 'Recommend the H3 workflow from the planned reference frames.' },
@@ -177,7 +177,7 @@ export function calculateH3FrameLength(durationSeconds: number): number {
     throw new RangeError(`H3 duration must be between ${H3_MIN_DURATION} and ${H3_MAX_DURATION} seconds`);
   }
   const targetFrames = durationSeconds * H3_FPS;
-  return 5 + 17 * Math.ceil((targetFrames - 5) / 17);
+  return Math.min(5 + 17 * Math.ceil((targetFrames - 5) / 17), 5 + 17 * Math.floor((H3_MAX_DURATION * H3_FPS - 5) / 17));
 }
 
 export function createH3ReferencePlan(product: Product): H3ReferencePlan {

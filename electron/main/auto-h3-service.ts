@@ -7,6 +7,10 @@ import { buildH3ReferenceSlotMappings, h3ContentTypeOptions, h3WorkflowSettingsF
 import { buildH3GenerationBrief } from '../../src/domain/h3-generation-brief';
 import { planCreativeGenome } from '../../src/domain/creative-diversity';
 import { validateH3WorkflowSettings } from '../../src/domain/minimax-h3-workflow';
+import { isNoProductVideo, supportBRollReferencePlan } from '../../src/domain/support-b-roll';
+import { selectAutoDuration } from '../../src/domain/auto-duration';
+import { isCtaEndCard, renderCtaEndCard, defaultCtaSettings } from '../../src/domain/cta-end-card';
+import { selectHookArchetype, type HookArchetype } from '../../src/domain/hook-archetype';
 import type { AppSettings, ComputeJobState, H3VideoBrief, RemoteH3GenerationRequest } from '../../src/domain/types';
 import type { HistoryDatabase } from './database';
 import type { AutoH3OutputEvidence, ComputeService } from './compute-service';
@@ -108,13 +112,13 @@ export class AutoH3Service {
       if (!config.selectedProducts.length || !config.selectedContentTypes.length) throw new Error('Select at least one product and one content type.');
       if (new Set(config.selectedProducts).size !== config.selectedProducts.length || config.selectedProducts.some(id => !products.some(p => p.id === id))) throw new Error('Invalid product selection.');
       if (new Set(config.selectedContentTypes).size !== config.selectedContentTypes.length || config.selectedContentTypes.some(type => !h3ContentTypeOptions.includes(type))) throw new Error('Invalid content type selection.');
-      if (!config.chinaRoot.trim() || !isAbsolute(config.laptopRoot)) throw new Error('Configure an absolute China archive root and Laptop Output Root.');
+      if (!config.chinaRoot.trim() || !isAbsolute(config.laptopRoot)) throw new Error('Configure an absolute archive root and Local Output Root.');
       validateH3WorkflowSettings(h3WorkflowSettingsFromBrief(config.brief));
       this.currentBrief = sanitizeAutoH3Brief(config.brief);
       mkdirSync(config.laptopRoot, { recursive: true });
       const probe = join(config.laptopRoot, `.proya-write-${randomUUID()}`);
       writeFileSync(probe, 'ok'); unlinkSync(probe);
-      await this.compute.autoProvider().testAutoArchive(config.chinaRoot);
+      if (config.selectedContentTypes.some(type => !isCtaEndCard(type))) await this.compute.autoProvider().testAutoArchive(config.chinaRoot);
       const session: AutoH3Session = {
         selectedProducts: [...config.selectedProducts], selectedContentTypes: [...config.selectedContentTypes],
         shuffleProducts: config.shuffleProducts, shuffleContentTypes: config.shuffleContentTypes,
@@ -160,7 +164,7 @@ export class AutoH3Service {
         if (state) job!.state = state;
         if (state?.remotePromptId && !terminal(state)) await this.compute.autoProvider().interruptAutoJob(state.remotePromptId);
       } catch (error) {
-        // A dead/overloaded China endpoint must not strand the local scheduler
+        // A dead/overloaded local endpoint must not strand the local scheduler
         // in STOPPING. The remote interrupt remains best-effort and is recorded
         // so the operator knows it was not confirmed.
         const remoteInterruptError = String(error);
@@ -206,18 +210,25 @@ export class AutoH3Service {
     return sanitizeAutoH3Brief(brief);
   }
 
-  private prepare(session: AutoH3Session, attempt = 0): AutoH3Job {
+  private prepare(session: AutoH3Session, attempt = 0, inheritedDuration?: number, inheritedHookArchetype?: HookArchetype): AutoH3Job {
     const product = getProduct(session.productOrder[session.productIndex])!;
     const contentType = session.contentTypeOrder[session.contentTypeIndex];
     const autoJobId = `h3-auto-${session.sessionId}-${session.cycleNumber}-${product.id}-${safeOutputComponent(contentType)}-${randomUUID()}`;
     const creativeSeed = (seed() ^ session.cycleSeed) >>> 0;
     const brief = this.briefForJob(session);
     brief.product = product.id; brief.contentType = contentType; brief.creativeSeed = creativeSeed;
+    brief.duration = inheritedDuration ?? selectAutoDuration();
+    brief.hookArchetype = contentType === 'Hook' ? inheritedHookArchetype ?? selectHookArchetype() : undefined;
     brief.creativeVariety ??= 'Balanced';
-    for (const ref of Object.values(brief.references)) if (ref.source === 'selected-product') {
-      ref.path = product.imagePath; ref.description = `${product.officialName} packaging reference`;
+    const supportBRoll = isNoProductVideo(contentType);
+    if (supportBRoll) {
+      brief.references = supportBRollReferencePlan(brief.references);
+    } else {
+      for (const ref of Object.values(brief.references)) if (ref.source === 'selected-product') {
+        ref.path = product.imagePath; ref.description = `${product.officialName} packaging reference`;
+      }
+      brief.references.productReference = { source: 'selected-product', path: product.imagePath, description: `${product.officialName} packaging reference` };
     }
-    brief.references.productReference = { source: 'selected-product', path: product.imagePath, description: `${product.officialName} packaging reference` };
     const history = this.db.listH3(2000);
     // Include a per-combination window even after large product cycles.
     const recent = history.filter(h => h.product === product.id && h.contentType === contentType).slice(0, 100);
@@ -227,24 +238,26 @@ export class AutoH3Service {
     if (brief.seedMode === 'random') brief.seed = seed();
     const workflow = validateH3WorkflowSettings(h3WorkflowSettingsFromBrief(brief));
     const generationBrief = buildH3GenerationBrief({ product, brief, genome: selected.genome, references: brief.references });
-    const record = this.db.createH3({ product: product.id, contentType, brief, concept: null, resolvedMode: 'REF2VA', referencePlan: brief.references, timeline: [], prompt: '', generationJobId: autoJobId, generationStatus: 'prepared', creativeSeed, creativeGenome: selected.genome, creativeFingerprint: selected.fingerprint, conceptSummary: selected.conceptSummary, noveltyScore: selected.noveltyScore, repetitionPenaltySources: selected.repetitionPenaltySources, diversityFallbackUsed: selected.diversityFallbackUsed, diversityFallbackReason: selected.diversityFallbackReason, rerollsUsed: selected.rerollsUsed, noveltyThresholdMissed: selected.noveltyThresholdMissed, creativeDiversityDiagnostics: selected.diversityDiagnostics, generationBrief });
+    const resolvedMode = supportBRoll ? 'T2VA' : 'REF2VA';
+    const record = this.db.createH3({ product: product.id, contentType, brief, concept: null, resolvedMode, referencePlan: brief.references, timeline: [], prompt: '', generationJobId: autoJobId, generationStatus: 'prepared', creativeSeed, creativeGenome: selected.genome, creativeFingerprint: selected.fingerprint, conceptSummary: selected.conceptSummary, noveltyScore: selected.noveltyScore, repetitionPenaltySources: selected.repetitionPenaltySources, diversityFallbackUsed: selected.diversityFallbackUsed, diversityFallbackReason: selected.diversityFallbackReason, rerollsUsed: selected.rerollsUsed, noveltyThresholdMissed: selected.noveltyThresholdMissed, creativeDiversityDiagnostics: selected.diversityDiagnostics, generationBrief });
     const settings = structuredClone(this.settings());
     const referenceImages = buildH3ReferenceSlotMappings(brief.references).map(mapping => ({ localPath: join(settings.productAssetsDirectory, basename(mapping.asset.path!.replaceAll('\\', '/'))) }));
-    const request: RemoteH3GenerationRequest = { autoJobId, autoSessionId: session.sessionId, autoCycleNumber: session.cycleNumber, localJobId: autoJobId, promptRecordId: record.id, product: product.id, generationBrief, promptEngine: settings.h3PromptEngine, mode: 'REF2VA', duration: workflow.durationSeconds, aspectRatio: workflow.aspectRatio, fps: workflow.fps, frames: workflow.frameLength, megapixels: workflow.megapixels, multiple: workflow.multiple, steps: workflow.steps, seed: workflow.seed, workflowSettings: workflow, firstFrame: null, lastFrame: null, productReference: null, referenceImages, productReferencePath: join(settings.productAssetsDirectory, basename(product.imagePath.replaceAll('\\', '/'))), scheduler: workflow.scheduler, refImageSize: workflow.refImageSize };
+    const request: RemoteH3GenerationRequest = { autoJobId, autoSessionId: session.sessionId, autoCycleNumber: session.cycleNumber, localJobId: autoJobId, promptRecordId: record.id, product: product.id, generationBrief, promptEngine: settings.h3PromptEngine, mode: resolvedMode, duration: workflow.durationSeconds, aspectRatio: workflow.aspectRatio, fps: workflow.fps, frames: workflow.frameLength, megapixels: workflow.megapixels, multiple: workflow.multiple, steps: workflow.steps, seed: workflow.seed, workflowSettings: workflow, firstFrame: null, lastFrame: null, productReference: null, referenceImages, productReferencePath: supportBRoll ? null : join(settings.productAssetsDirectory, basename(product.imagePath.replaceAll('\\', '/'))), scheduler: workflow.scheduler, refImageSize: workflow.refImageSize };
     const createdAt = now();
     const filename = `${createdAt.replace(/[^0-9]/g, '').slice(0, 14)}__${product.id}__${safeOutputComponent(contentType)}__${createHash('sha256').update(selected.fingerprint.signature).digest('hex').slice(0, 12)}__${workflow.seed}__${autoJobId}.mp4`;
     // Full identity in metadata and SaveVideo prefix; short suffix keeps Windows paths usable.
     const shortFilename = filename.replace(autoJobId, autoJobId.slice(-12));
-    return { autoJobId, sessionId: session.sessionId, cycleNumber: session.cycleNumber, cycleSeed: session.cycleSeed, product: product.id, contentType, createdAt, finishedAt: null, status: 'PREPARED', request, state: null, attempt, diagnostics: [], creativeGenome: selected.genome, creativeFingerprint: selected.fingerprint.signature, relativePath: `${createdAt.slice(0, 10)}/${safeOutputComponent(product.shortName)}/${safeOutputComponent(contentType)}/${shortFilename}`, chinaArchivePath: null, chinaArchiveSucceeded: false, chinaArchiveError: null, archiveSize: null, laptopOutputPath: null, laptopDownloadSucceeded: false, laptopDownloadError: null, downloadStatus: 'WAITING_RENDER' };
+    return { autoJobId, sessionId: session.sessionId, cycleNumber: session.cycleNumber, cycleSeed: session.cycleSeed, product: product.id, contentType, durationSeconds: brief.duration, hookArchetype: brief.hookArchetype, createdAt, finishedAt: null, status: 'PREPARED', request, state: null, attempt, diagnostics: [], ctaBrief: isCtaEndCard(contentType) ? structuredClone(brief) : undefined, creativeGenome: selected.genome, creativeFingerprint: selected.fingerprint.signature, relativePath: `${createdAt.slice(0, 10)}/${safeOutputComponent(product.shortName)}/${safeOutputComponent(contentType)}/${shortFilename}`, chinaArchivePath: null, chinaArchiveSucceeded: false, chinaArchiveError: null, archiveSize: null, laptopOutputPath: null, laptopDownloadSucceeded: false, laptopDownloadError: null, downloadStatus: 'WAITING_RENDER' };
   }
 
   private failedPlan(session: AutoH3Session, autoJobId: string, attempt: number, error: string, sourceBrief: H3VideoBrief): AutoH3Job {
     const product = session.productOrder[session.productIndex];
     const contentType = session.contentTypeOrder[session.contentTypeIndex];
     const brief = { ...structuredClone(sourceBrief), product, contentType };
-    const record = this.db.createH3({ product, contentType, brief, concept: null, resolvedMode: 'REF2VA', referencePlan: brief.references, timeline: [], prompt: '', generationJobId: autoJobId, generationStatus: 'failed' });
+    const mode = isNoProductVideo(contentType) ? 'T2VA' : 'REF2VA';
+    const record = this.db.createH3({ product, contentType, brief, concept: null, resolvedMode: mode, referencePlan: brief.references, timeline: [], prompt: '', generationJobId: autoJobId, generationStatus: 'failed' });
     const workflow = validateH3WorkflowSettings(h3WorkflowSettingsFromBrief(brief));
-    return { autoJobId, sessionId: session.sessionId, cycleNumber: session.cycleNumber, cycleSeed: session.cycleSeed, product, contentType, createdAt: now(), finishedAt: null, status: 'PREPARED', attempt, diagnostics: [error], request: { autoJobId, autoSessionId: session.sessionId, autoCycleNumber: session.cycleNumber, localJobId: autoJobId, promptRecordId: record.id, mode: 'REF2VA', duration: workflow.durationSeconds, aspectRatio: workflow.aspectRatio, fps: workflow.fps, frames: workflow.frameLength, megapixels: workflow.megapixels, multiple: workflow.multiple, steps: workflow.steps, seed: workflow.seed, scheduler: workflow.scheduler, refImageSize: workflow.refImageSize, workflowSettings: workflow, firstFrame: null, lastFrame: null, productReference: null }, state: null, relativePath: '', chinaArchivePath: null, chinaArchiveSucceeded: false, chinaArchiveError: null, archiveSize: null, laptopOutputPath: null, laptopDownloadSucceeded: false, laptopDownloadError: null, downloadStatus: 'WAITING_RENDER' };
+    return { autoJobId, sessionId: session.sessionId, cycleNumber: session.cycleNumber, cycleSeed: session.cycleSeed, product, contentType, durationSeconds: brief.duration, createdAt: now(), finishedAt: null, status: 'PREPARED', attempt, diagnostics: [error], request: { autoJobId, autoSessionId: session.sessionId, autoCycleNumber: session.cycleNumber, localJobId: autoJobId, promptRecordId: record.id, mode, duration: workflow.durationSeconds, aspectRatio: workflow.aspectRatio, fps: workflow.fps, frames: workflow.frameLength, megapixels: workflow.megapixels, multiple: workflow.multiple, steps: workflow.steps, seed: workflow.seed, scheduler: workflow.scheduler, refImageSize: workflow.refImageSize, workflowSettings: workflow, firstFrame: null, lastFrame: null, productReference: null }, state: null, relativePath: '', chinaArchivePath: null, chinaArchiveSucceeded: false, chinaArchiveError: null, archiveSize: null, laptopOutputPath: null, laptopDownloadSucceeded: false, laptopDownloadError: null, downloadStatus: 'WAITING_RENDER' };
   }
 
   async tick(): Promise<void> {
@@ -261,6 +274,25 @@ export class AutoH3Service {
         this.save(session, job);
       }
       if (job.finishedAt) { this.recoverFinished(session, job); return; }
+      if (isCtaEndCard(job.contentType)) {
+        try {
+          if (job.product === 'full-series') throw new Error('CTA Full Series requires a verified composite master; the serum thumbnail is not a Full Series master.');
+          const product = getProduct(job.product)!;
+          const brief = job.ctaBrief ?? this.briefForJob(session);
+          const masterPath = join(this.settings().productAssetsDirectory, basename(product.imagePath.replaceAll('\\', '/')));
+          const outputPath = resolve(session.chinaRoot, job.relativePath);
+          const rendered = await renderCtaEndCard({ productId: product.id, masterPath, outputPath,
+            settings: { ...(brief.cta ?? defaultCtaSettings), duration: job.durationSeconds ?? brief.duration },
+            language: brief.language, aspectRatio: brief.aspectRatio === 'Custom' ? '9:16' : brief.aspectRatio,
+            seed: parseInt(job.autoJobId.slice(-8).replace(/[^0-9a-f]/gi, '0'), 16) >>> 0,
+            previousStyle: [...this.jobs.values()].filter(item => item.product === job.product && isCtaEndCard(item.contentType) && item.ctaStyle && item.autoJobId !== job.autoJobId).at(-1)?.ctaStyle });
+          job.ctaStyle = rendered.style;
+          job.chinaArchivePath = rendered.path; job.chinaArchiveSucceeded = true; job.archiveSize = rendered.size;
+          job.laptopOutputPath = rendered.path; job.laptopDownloadSucceeded = true; job.downloadStatus = 'COMPLETE';
+          this.finish(session, job, true);
+        } catch (error) { this.finish(session, job, false, String(error)); }
+        return;
+      }
       if (!job.request.generationBrief && job.diagnostics.length) { this.finish(session, job, false, job.diagnostics[0]); return; }
       let state = await this.compute.recoverAutoJob(job.autoJobId);
       if (!state) {
@@ -342,16 +374,16 @@ export class AutoH3Service {
     if (job.finishedAt) { this.recoverFinished(session, job); return; }
     job.status = success ? 'COMPLETED' : 'FAILED'; job.finishedAt = now();
     if (error) job.diagnostics.push(error);
-    if (success) { session.completedCount++; session.lastSuccessfulJobId = job.autoJobId; job.downloadStatus = 'PENDING_DOWNLOAD'; }
+    if (success) { session.completedCount++; session.lastSuccessfulJobId = job.autoJobId; if (!isCtaEndCard(job.contentType)) job.downloadStatus = 'PENDING_DOWNLOAD'; }
     else session.failedCount++;
     const failureStage = job.state?.failureStage ?? job.state?.pipelineStage ?? (job.state ? '' : 'PROMPT');
     const promptFailure = /PROMPT_GENERATION|PROMPT_GENERATION_TIMEOUT|LLM_UNAVAILABLE|LLM_UNLOAD|WRITING/.test(failureStage);
     const validationFailure = failureStage === 'PROMPT_VALIDATION_FAILED';
     const remoteStateLost = failureStage === 'REMOTE_STATE_LOST';
-    const retry = !success && !validationFailure && !remoteStateLost && !session.stopRequested && job.attempt < (promptFailure ? 2 : 1);
+    const retry = !isCtaEndCard(job.contentType) && !success && !validationFailure && !remoteStateLost && !session.stopRequested && job.attempt < (promptFailure ? 2 : 1);
     if (retry) {
       this.save(session, job);
-      const replacement = this.prepare(session, job.attempt + 1);
+      const replacement = this.prepare(session, job.attempt + 1, job.durationSeconds ?? job.request.duration, job.hookArchetype);
       session.currentJobId = replacement.autoJobId; session.generatedCount++;
       this.save(session, replacement);
     } else {
@@ -367,9 +399,9 @@ export class AutoH3Service {
     const promptFailure = /PROMPT_GENERATION|PROMPT_GENERATION_TIMEOUT|LLM_UNAVAILABLE|LLM_UNLOAD|WRITING/.test(failureStage);
     const validationFailure = failureStage === 'PROMPT_VALIDATION_FAILED';
     const remoteStateLost = failureStage === 'REMOTE_STATE_LOST';
-    const retry = job.status === 'FAILED' && !validationFailure && !remoteStateLost && !session.stopRequested && job.attempt < (promptFailure ? 2 : 1);
+    const retry = !isCtaEndCard(job.contentType) && job.status === 'FAILED' && !validationFailure && !remoteStateLost && !session.stopRequested && job.attempt < (promptFailure ? 2 : 1);
     if (retry) {
-      const replacement = this.prepare(session, job.attempt + 1);
+      const replacement = this.prepare(session, job.attempt + 1, job.durationSeconds ?? job.request.duration, job.hookArchetype);
       session.currentJobId = replacement.autoJobId; session.generatedCount++;
       this.save(session, replacement);
     } else {
@@ -437,7 +469,7 @@ export class AutoH3Service {
         try {
           const target = resolve(session.laptopRoot, job.relativePath);
           const relativeTarget = relative(resolve(session.laptopRoot), target);
-          if (!relativeTarget || relativeTarget.startsWith('..') || isAbsolute(relativeTarget)) throw new Error('Unsafe laptop output path.');
+          if (!relativeTarget || relativeTarget.startsWith('..') || isAbsolute(relativeTarget)) throw new Error('Unsafe local output path.');
           if (!existsSync(target) || statSync(target).size !== job.archiveSize) {
             const output = findComfyVideoOutputs(job.state?.outputs ?? [])[0];
             if (!output) throw new Error('Missing saved output descriptor.');

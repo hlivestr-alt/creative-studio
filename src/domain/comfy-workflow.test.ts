@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { collectH3WorkflowPlaceholders, h3WorkflowPlaceholders, parseComfyApiWorkflow, prepareH3ComfyWorkflow, type H3WorkflowVariables } from './comfy-workflow';
-import { minimaxH3WorkflowMappings, resolveH3Resolution, traceMiniMaxH3EffectiveSteps, validateMiniMaxH3ApiWorkflowTemplate, validateMiniMaxH3GenerationRequest } from './minimax-h3-workflow';
+import { deriveMiniMaxH3T2VAWorkflowTemplate, minimaxH3WorkflowMappings, resolveH3Resolution, traceMiniMaxH3EffectiveSteps, validateMiniMaxH3ApiWorkflowTemplate, validateMiniMaxH3GenerationRequest, validateMiniMaxH3T2VAApiWorkflowTemplate } from './minimax-h3-workflow';
 
 const variables: H3WorkflowVariables = {
   prompt: 'A precise product reveal.',
@@ -105,6 +105,22 @@ describe('ComfyUI API workflow boundary', () => {
     expect(workflow['152'].inputs.instance_id).toEqual(['149', 9]);
     expect(workflow['153'].inputs.value).toBe(variables.mediaManifest);
     expect(workflow['124'].inputs.scheduler).toBe('simple');
+  });
+
+  it('derives the additive T2VA graph with the FL2VA model and no reference inputs', () => {
+    const ref2va = JSON.parse(readFileSync(join(process.cwd(), 'workflows', 'minimax-h3-api.json'), 'utf8')) as unknown;
+    const template = deriveMiniMaxH3T2VAWorkflowTemplate(ref2va);
+    expect(() => validateMiniMaxH3T2VAApiWorkflowTemplate(template)).not.toThrow();
+    expect(template['127'].inputs.unet_name).toBe('minimax_h3_fl2va_pruned_int8_convrot.safetensors');
+    expect(template['136'].class_type).toBe('MiniMaxH3ImageToVideo');
+    expect(template['136'].inputs).not.toHaveProperty('first_frame');
+    expect(template['136'].inputs).not.toHaveProperty('last_frame');
+    expect(Object.keys(template['136'].inputs).some(name => name.startsWith('ref_'))).toBe(false);
+    expect(template).not.toHaveProperty('137');
+    expect(template).not.toHaveProperty('139');
+    const prepared = prepareH3ComfyWorkflow(template, { ...variables, mode: 'T2VA', productReference: null, referenceImages: [], mediaManifest: '{"mode":"t2va","items":[],"subjects":[]}' });
+    expect(prepared['149'].inputs.mode).toBe('t2va');
+    expect(prepared['150'].inputs.mode).toBe('t2va');
   });
 
   it('omits an output-token limit from the explicit node 149 prompt contract', () => {

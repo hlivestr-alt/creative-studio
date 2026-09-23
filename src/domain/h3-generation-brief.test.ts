@@ -49,6 +49,82 @@ const brief: H3VideoBrief = {
 };
 
 describe('H3GenerationBrief', () => {
+  it.each([
+    ['cleanser', 'dry and tight', 'bathroom sink'],
+    ['serum', 'dark spots', 'mirror'],
+    ['eye-cream', 'dark under-eyes', 'mirror']
+  ] as const)('makes the %s Hook person and concern first', (productId, concern, setting) => {
+    const selected = getProduct(productId)!;
+    const result = buildH3GenerationBrief({
+      product: selected,
+      brief: { ...brief, product: productId, contentType: 'Hook', videoIdea: '', specialInstructions: '' }
+    });
+    const serialized = serializeH3GenerationBrief(result);
+    expect(serialized).toContain(concern);
+    expect(serialized).toContain(setting);
+    expect(serialized).toContain('person and recognizable problem are the primary subject');
+    expect(serialized).toContain('No product at any point');
+    expect(result.workflowMode).toBe('T2VA');
+    expect(result.references).toEqual([]);
+    expect(result.creativeDirection.composition).toContain('Face and the relevant skin area dominate');
+    expect(result.videoIdea).not.toContain('product reveal');
+  });
+
+  it('steers Product B-Roll toward practical edit inserts and away from luxury spectacle while preserving the product reference', () => {
+    const serialized = serializeH3GenerationBrief(buildH3GenerationBrief({ product, brief }));
+
+    expect(serialized).toContain('PRACTICAL PRODUCT B-ROLL CONTRACT');
+    expect(serialized).toContain('social-commerce insert');
+    expect(serialized).toContain('bathroom vanity, skincare shelf, clean countertop');
+    expect(serialized).toContain('tripod, controlled handheld camera, small slider, simple macro move, or gentle push-in');
+    expect(serialized).toContain('no sports-car-commercial lighting');
+    expect(serialized).toContain('no sports-car-commercial lighting, black glossy supercar stage, aggressive orbit, huge lens flare');
+    expect(serialized).toContain('Preserve the product directly from the authoritative reference');
+    expect(serialized).toContain('<Picture 1>');
+  });
+
+  it('makes Educational output a text-free visual explanation and reserves requested captions for post-generation overlay', () => {
+    const educational = buildH3GenerationBrief({
+      product,
+      brief: { ...brief, contentType: 'Educational', captions: true, subtitles: true, videoIdea: 'Show hydration entering dry-looking skin.' }
+    });
+    const serialized = serializeH3GenerationBrief(educational);
+
+    expect(serialized).toContain('TEXT-FREE EDUCATIONAL CONTRACT');
+    expect(serialized).toContain('understandable with zero text overlay');
+    expect(serialized).toContain('hydration entering dry-looking skin');
+    expect(serialized).toContain('NO readable text. NO typography, labels, words, letters, subtitles, captions');
+    expect(serialized).toContain('deterministic post-generation application overlay if available');
+    expect(serialized).not.toContain('Captions may be generated only');
+    expect(serialized).not.toContain('Subtitles may be generated only');
+  });
+
+  it('gives Ingredient / Texture serum-specific and ingredient-macro guidance without generic product-ad drift or generated text', () => {
+    const serum = getProduct('serum')!;
+    const ingredientBrief = buildH3GenerationBrief({
+      product: serum,
+      brief: {
+        ...brief,
+        product: serum.id,
+        contentType: 'Ingredient / Texture',
+        videoIdea: 'Show the product texture.',
+        references: {
+          ...createOptionalH3ReferencePlan(serum),
+          productReference: { source: 'selected-product', path: serum.imagePath, description: `${serum.officialName} packaging reference` }
+        }
+      }
+    });
+    const serialized = serializeH3GenerationBrief(ingredientBrief);
+
+    expect(serialized).toContain('SKINCARE INGREDIENT / TEXTURE CONTRACT');
+    expect(serialized).toContain('translucent clear serum droplet or bead');
+    expect(serialized).toContain('vitamin-C-inspired citrus macro');
+    expect(serialized).toContain('does not need to dominate every shot');
+    expect(serialized).toContain('Do not drift into a food or beverage advertisement');
+    expect(serialized).toContain('generic abstract luxury advertising');
+    expect(serialized).toContain('NO readable text. NO typography, labels');
+  });
+
   it('keeps Creative Diversity before Qwen and serializes only an intermediate REF2VA brief', () => {
     const plan = planCreativeGenome({
       product,
@@ -179,6 +255,30 @@ describe('H3GenerationBrief', () => {
     expect(generationBrief.allowedReferenceLabels.pictures).toEqual(['<Picture 1>']);
     expect(generationBrief.specialInstructions).toContain('Text-only style direction');
     expect(generationBrief.specialInstructions).not.toContain('<Picture 2>');
+  });
+
+  it('builds Support B-Roll as theme-guided footage with no product or image identity contract', () => {
+    const plan = planCreativeGenome({ product, contentFamily: 'Support B-Roll', recentHistory: [], seed: 9 });
+    const generationBrief = buildH3GenerationBrief({
+      product,
+      brief: { ...brief, contentType: 'Support B-Roll', videoIdea: '', creativeGenome: plan.genome },
+      genome: plan.genome
+    });
+    const serialized = serializeH3GenerationBrief(generationBrief);
+    const manifest = JSON.parse(generationBrief.mediaManifest) as { items: unknown[]; subjects: unknown[] };
+
+    expect(['Problem Hook', 'Skin Beauty Close-Up', 'Science Animation', 'Aesthetic Transition']).toContain(plan.genome.creativeArchetype);
+    expect(generationBrief.workflowMode).toBe('T2VA');
+    expect(generationBrief.references).toEqual([]);
+    expect(generationBrief.productCorrections).toEqual([]);
+    expect(generationBrief.allowedReferenceLabels).toEqual({ subjects: [], pictures: [], videos: [], audios: [] });
+    expect(manifest).toMatchObject({ items: [], subjects: [], mode: 't2va' });
+    expect(serialized).toContain('WORKFLOW MODE LOCK: T2VA.');
+    expect(generationBrief.videoIdea).toContain('cleansing');
+    expect(serialized).toContain('NON-PRODUCT SUPPORT B-ROLL CONTRACT');
+    expect(serialized).toContain('Do not show a product, packaging, packshot');
+    expect(serialized).not.toContain('<Picture 1>');
+    expect(serialized).not.toContain('<Subject 1>');
   });
 
   it('collapses a duplicate physical file so a second label cannot be invented for the same image', () => {

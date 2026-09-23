@@ -1,0 +1,10 @@
+{
+  "mode": "production",
+  "maxJobsPerSession": null,
+  "listenAddress": "127.0.0.1",
+  "listenPort": 8787,
+  "stateRoot": "D:\\AI Videos\\.proya-auto",
+  "archiveRoot": "D:\\AI Videos",
+  "comfyUrl": "http://127.0.0.1:8188",
+  "lmStudioUrl": "http://127.0.0.1:1234"
+}

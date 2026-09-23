@@ -3,6 +3,7 @@ const { join, resolve } = require('node:path');
 const { createHash } = require('node:crypto');
 const { extractFile } = require('@electron/asar');
 const obsoleteProviderCompletionError = ['H3 execution has not finished in ComfyUI history', 'VRAM release was not requested.'].join('; ');
+const requiredProductAssets = ['cleanser.png', 'toner.png', 'serum.png', 'eye-cream.png', 'skin-cream.png', 'mask.png'];
 
 function verifyH3Package(projectDir, resourcesDir) {
   const source = readFileSync(join(projectDir, 'workflows/minimax-h3-api.json'));
@@ -14,12 +15,18 @@ function verifyH3Package(projectDir, resourcesDir) {
     }
   }
   if (!source.equals(packaged)) throw new Error('Source and packaged H3 workflows differ');
+  const productAssets = requiredProductAssets.map((filename) => {
+    const sourceAsset = readFileSync(join(projectDir, 'product-assets', filename));
+    const packagedAsset = readFileSync(join(resourcesDir, 'product-assets', filename));
+    if (!sourceAsset.equals(packagedAsset)) throw new Error(`Source and packaged product asset differ: ${filename}`);
+    return { filename, sha256: createHash('sha256').update(packagedAsset).digest('hex') };
+  });
   const main = extractFile(join(resourcesDir, 'app.asar'), 'dist-electron/main.cjs').toString();
   if (/H3_MAX_TOKENS|\bmaxTokens\b/.test(main)) throw new Error('Packaged H3 injector/settings contain obsolete token controls');
   const oldErrorOccurrences = main.split(obsoleteProviderCompletionError).length - 1;
   if (oldErrorOccurrences !== 0) throw new Error('Packaged app contains the obsolete provider-level H3 completion guard');
   const hash = createHash('sha256').update(source).digest('hex');
-  return { sourceSha256: hash, packagedSha256: createHash('sha256').update(packaged).digest('hex'), staleOccurrences: 0, oldErrorOccurrences };
+  return { sourceSha256: hash, packagedSha256: createHash('sha256').update(packaged).digest('hex'), productAssets, staleOccurrences: 0, oldErrorOccurrences };
 }
 
 module.exports = async (context) => {

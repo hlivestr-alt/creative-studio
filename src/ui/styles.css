@@ -943,6 +943,10 @@ select:focus, input:focus, textarea:focus { box-shadow: none; }
 .auto-status { padding: 14px; margin-top: 14px; background: var(--bg-raised); border-radius: 10px; }
 .auto-status dl { display: grid; grid-template-columns: 145px 1fr; gap: 8px; }
 .auto-status dd { margin: 0; overflow-wrap: anywhere; }
+.local-engine-panel { padding: 14px; margin-top: 16px; border: 1px solid var(--line); border-radius: 10px; background: var(--bg-raised); }
+.local-engine-panel h3 { margin: 0 0 12px; }
+.local-engine-panel dl { display: grid; grid-template-columns: 110px 1fr; gap: 8px; margin: 0; }
+.local-engine-panel dd { margin: 0; color: var(--text-strong); }
 .auto-advanced { margin: 20px 0; border-top: 1px solid var(--line); padding-top: 15px; }
 .auto-h3-panel pre { white-space: pre-wrap; max-height: 320px; overflow: auto; }
 .auto-h3-panel details { margin-top: 12px; }

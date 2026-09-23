@@ -17,7 +17,7 @@ import type {
 } from "../../src/domain/types";
 import { normalizeH3LockedProductPlateMode } from "../../src/domain/locked-product-plate";
 
-import type { AutoH3Session, AutoH3Job, ChinaAutoSessionMirror } from "../../src/domain/auto-h3";
+import type { AutoH3Session, AutoH3Job, LocalAutoSessionMirror } from "../../src/domain/auto-h3";
 
 const localRequire = createRequire(__filename);
 
@@ -115,6 +115,7 @@ type StoredRemoteH3State = Partial<RemoteH3JobRecord["state"]> & {
 };
 
 const h3ContentTypeValues: readonly H3ContentType[] = [
+  "Hook", "Benefits", "Ingredients", "Product", "Support B-Roll", "CTA / End Card",
   "Cinematic Product Ad",
   "UGC Content",
   "Product Demo",
@@ -132,7 +133,7 @@ const normalizeH3ContentType = (
   const candidate = value ?? brief.contentType;
   return h3ContentTypeValues.includes(candidate as H3ContentType)
     ? (candidate as H3ContentType)
-    : "Cinematic Product Ad";
+    : "Product";
 };
 
 const normalizeH3Brief = (brief: H3VideoBrief): H3VideoBrief => {
@@ -693,10 +694,10 @@ export class HistoryDatabase {
       );
       CREATE INDEX IF NOT EXISTS idx_remote_h3_jobs_updated_at ON remote_h3_jobs(updatedAt DESC);
     `);
-    const chinaMirrorColumns = this.query<{ name: string }>('PRAGMA table_info(china_auto_session_mirror)');
-    if (!chinaMirrorColumns.some(column => column.name === 'settingsVersionIdentity')) this.database.run("ALTER TABLE china_auto_session_mirror ADD COLUMN settingsVersionIdentity TEXT NOT NULL DEFAULT ''");
-    if (!chinaMirrorColumns.some(column => column.name === 'stagingState')) this.database.run("ALTER TABLE china_auto_session_mirror ADD COLUMN stagingState TEXT NOT NULL DEFAULT 'STAGED_READY'");
-    if (!chinaMirrorColumns.some(column => column.name === 'createdTimestamp')) this.database.run("ALTER TABLE china_auto_session_mirror ADD COLUMN createdTimestamp TEXT NOT NULL DEFAULT ''");
+    const localMirrorColumns = this.query<{ name: string }>('PRAGMA table_info(china_auto_session_mirror)');
+    if (!localMirrorColumns.some(column => column.name === 'settingsVersionIdentity')) this.database.run("ALTER TABLE china_auto_session_mirror ADD COLUMN settingsVersionIdentity TEXT NOT NULL DEFAULT ''");
+    if (!localMirrorColumns.some(column => column.name === 'stagingState')) this.database.run("ALTER TABLE china_auto_session_mirror ADD COLUMN stagingState TEXT NOT NULL DEFAULT 'STAGED_READY'");
+    if (!localMirrorColumns.some(column => column.name === 'createdTimestamp')) this.database.run("ALTER TABLE china_auto_session_mirror ADD COLUMN createdTimestamp TEXT NOT NULL DEFAULT ''");
     const columns = this.query<{ name: string }>(
       "PRAGMA table_info(creative_history)",
     );
@@ -873,19 +874,19 @@ export class HistoryDatabase {
     this.persist();
   }
 
-  saveChinaAutoMirror(mirror: ChinaAutoSessionMirror): void {
+  saveLocalAutoMirror(mirror: LocalAutoSessionMirror): void {
     this.database.run(`INSERT OR REPLACE INTO china_auto_session_mirror
       (sessionId,lastKnownRevision,bundleHash,runnerVersion,connectionState,lastSuccessfulSync,settingsVersionIdentity,stagingState,createdTimestamp)
       VALUES (?,?,?,?,?,?,?,?,?)`, [mirror.sessionId, mirror.lastKnownRevision, mirror.bundleHash, mirror.runnerVersion, mirror.connectionState, mirror.lastSuccessfulSync, mirror.settingsVersionIdentity, mirror.stagingState, mirror.createdTimestamp]);
     this.persist();
   }
 
-  getChinaAutoMirror(sessionId: string): ChinaAutoSessionMirror | null {
-    return this.query<ChinaAutoSessionMirror>('SELECT sessionId,lastKnownRevision,bundleHash,runnerVersion,connectionState,lastSuccessfulSync,settingsVersionIdentity,stagingState,createdTimestamp FROM china_auto_session_mirror WHERE sessionId=?', [sessionId])[0] ?? null;
+  getLocalAutoMirror(sessionId: string): LocalAutoSessionMirror | null {
+    return this.query<LocalAutoSessionMirror>('SELECT sessionId,lastKnownRevision,bundleHash,runnerVersion,connectionState,lastSuccessfulSync,settingsVersionIdentity,stagingState,createdTimestamp FROM china_auto_session_mirror WHERE sessionId=?', [sessionId])[0] ?? null;
   }
 
-  getLatestChinaAutoDraft(): ChinaAutoSessionMirror | null {
-    return this.query<ChinaAutoSessionMirror>('SELECT sessionId,lastKnownRevision,bundleHash,runnerVersion,connectionState,lastSuccessfulSync,settingsVersionIdentity,stagingState,createdTimestamp FROM china_auto_session_mirror ORDER BY createdTimestamp DESC, rowid DESC LIMIT 1')[0] ?? null;
+  getLatestLocalAutoDraft(): LocalAutoSessionMirror | null {
+    return this.query<LocalAutoSessionMirror>('SELECT sessionId,lastKnownRevision,bundleHash,runnerVersion,connectionState,lastSuccessfulSync,settingsVersionIdentity,stagingState,createdTimestamp FROM china_auto_session_mirror ORDER BY createdTimestamp DESC, rowid DESC LIMIT 1')[0] ?? null;
   }
 
   private query<T>(

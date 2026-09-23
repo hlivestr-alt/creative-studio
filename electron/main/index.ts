@@ -9,12 +9,17 @@ import { HistoryDatabase, loadSqlite } from './database';
 import { SettingsStore } from './settings-store';
 import { ComputeService } from './compute-service';
 import { ExplicitReferenceAuthorizationStore } from './reference-authorization';
-import { defaultSettings, getChatWorkspaceUrl } from '../../src/domain/settings';
+import { defaultSettings, getChatWorkspaceUrl, RUNNER_BASE_URL } from '../../src/domain/settings';
 import type { AppSettings, ChatPanelBounds, ComfyOutputFile, H3PromptEngineSettings, H3PromptInput, H3PromptUpdate, H3VideoBrief, HistoryInput, HistoryUpdate, RemoteH3GenerationRequest } from '../../src/domain/types';
 import { windowChannels, windowStateFromMaximized, type WindowState } from '../../src/domain/window';
 import { calculateChatViewBounds, hiddenChatViewBounds, type LayoutRect, type WindowContentSize } from './chat-bounds';
 import { h3LifecycleSchemaVersion, type RuntimeDiagnostics } from '../../src/domain/runtime';
-import { ChinaAutoH3ShadowController } from './china-auto-h3-controller';
+import { LocalAutoH3Controller } from './local-auto-h3-controller';
+import { LocalAutoH3Client } from './local-auto-h3-client';
+import { LocalServicesManager } from './local-services';
+import { renderCtaEndCard, defaultCtaSettings } from '../../src/domain/cta-end-card';
+import { getProduct } from '../../src/domain/data';
+import { randomUUID } from 'node:crypto';
 
 protocol.registerSchemesAsPrivileged([{ scheme: 'proya-asset', privileges: { standard: true, secure: true, supportFetchAPI: true } }]);
 
@@ -24,7 +29,8 @@ let database: HistoryDatabase | null = null;
 let settingsStore: SettingsStore | null = null;
 let computeService: ComputeService | null = null;
 let autoH3Service: AutoH3Service | null = null;
-let chinaShadowController: ChinaAutoH3ShadowController | null = null;
+let localRunnerController: LocalAutoH3Controller | null = null;
+const localServices = new LocalServicesManager();
 let runtimeDatabasePath: string | null = null;
 let runtimeStaticDiagnostics: Omit<RuntimeDiagnostics, 'databaseSchemaVersion' | 'currentAutoSessionId' | 'currentAutoJobId' | 'currentComputeJobId' | 'currentComfyPromptId'> | null = null;
 const referenceAuthorization = new ExplicitReferenceAuthorizationStore();
@@ -39,6 +45,16 @@ const smokeRoute = process.argv.find((argument) => argument.startsWith('--smoke-
 const smokeH3 = process.argv.includes('--smoke-test-h3');
 const smokeAutoH3 = process.argv.includes('--smoke-test-auto-h3');
 const smokeReadinessHold = process.argv.includes('--smoke-test-readiness-hold');
+const smokeGuiProductionStartStageOnly = process.argv.includes('--smoke-test-gui-production-start-stage-only');
+const smokeGuiProduct = process.argv.find((argument) => argument.startsWith('--smoke-test-product='))?.split('=').slice(1).join('=') ?? 'Serum';
+const smokeGuiContentType = process.argv.find((argument) => argument.startsWith('--smoke-test-content='))?.split('=').slice(1).join('=') ?? 'Support B-Roll';
+const smokeRealAutoH3 = process.argv.includes('--smoke-test-real-auto-h3');
+const guiProductionStartTrace: Array<Record<string, unknown>> = [];
+function recordGuiProductionStart(stage: string, detail: Record<string, unknown> = {}): void {
+  const entry = { stage, at: new Date().toISOString(), ...detail };
+  guiProductionStartTrace.push(entry);
+  console.info(`[PROYA_START_TRACE] ${JSON.stringify(entry)}`);
+}
 if (smokeOutput) {
   const profile = join(dirname(resolve(smokeOutput)), 'smoke-profile');
   mkdirSync(profile, { recursive: true });
@@ -176,6 +192,7 @@ async function waitForRendererSelector(selector: string): Promise<boolean> {
 
 function registerIpc(): void {
   ipcMain.handle('runtime:get-diagnostics', () => runtimeDiagnostics());
+  ipcMain.handle('local-services:status', () => localServices.status());
   ipcMain.handle('history:list', (_event, limit?: number) => database?.list(limit ?? 100) ?? []);
   ipcMain.handle('history:create', (_event, input: HistoryInput) => database?.create(input));
   ipcMain.handle('history:update', (_event, id: number, update: HistoryUpdate) => database?.update(id, update));
@@ -189,23 +206,28 @@ function registerIpc(): void {
   ipcMain.handle('compute:get-workflow-defaults', () => computeService?.getWorkflowDefaults());
   ipcMain.handle('auto-h3:snapshot', () => autoH3Service?.snapshot());
   ipcMain.handle('auto-h3:stage-shadow', (_event, config: AutoH3Config, stageUpdated = false) => {
-    if (!chinaShadowController) throw new Error('China shadow controller unavailable.');
-    return chinaShadowController.stage(config, stageUpdated);
+    if (!localRunnerController) throw new Error('Local session controller unavailable.');
+    return localRunnerController.stage(config, stageUpdated);
   });
   ipcMain.handle('auto-h3:new-shadow-session', (_event, config: AutoH3Config) => {
-    if (!chinaShadowController) throw new Error('China shadow controller unavailable.');
-    return chinaShadowController.newDraft(config);
+    if (!localRunnerController) throw new Error('Local session controller unavailable.');
+    return localRunnerController.newDraft(config);
   });
-  ipcMain.handle('auto-h3:start-canary', (_event, sessionId: string, bundleHash: string) => chinaShadowController?.startCanary(sessionId, bundleHash));
-  ipcMain.handle('auto-h3:start-two-job-canary', (_event, sessionId: string, bundleHash: string) => chinaShadowController?.startTwoJobCanary(sessionId, bundleHash));
-  ipcMain.handle('auto-h3:start-production', (_event, config: AutoH3Config) => chinaShadowController?.startProduction(config));
-  ipcMain.handle('auto-h3:update-production-settings', (_event, sessionId: string, brief: H3VideoBrief) => chinaShadowController?.updateProductionSettings(sessionId, brief));
-  ipcMain.handle('auto-h3:canary-readiness', () => chinaShadowController?.canaryReadiness());
-  ipcMain.handle('auto-h3:canary-status', (_event, sessionId: string) => chinaShadowController?.canaryStatus(sessionId));
-  ipcMain.handle('auto-h3:stop-canary-after-current', (_event, sessionId: string) => chinaShadowController?.stopAfterCurrent(sessionId));
-  ipcMain.handle('auto-h3:stop-canary-now', (_event, sessionId: string) => chinaShadowController?.stopNow(sessionId));
-  ipcMain.handle('auto-h3:download-canary-artifact', (_event, sessionId: string, jobId: string, destinationRoot: string) => chinaShadowController?.downloadCanaryArtifact(sessionId, jobId, destinationRoot));
-  ipcMain.handle('auto-h3:sync-canary-artifacts', (_event, sessionId: string, destinationRoot: string) => chinaShadowController?.syncCanaryArtifacts(sessionId, destinationRoot));
+  ipcMain.handle('auto-h3:start-canary', (_event, sessionId: string, bundleHash: string) => localRunnerController?.startCanary(sessionId, bundleHash));
+  ipcMain.handle('auto-h3:start-two-job-canary', (_event, sessionId: string, bundleHash: string) => localRunnerController?.startTwoJobCanary(sessionId, bundleHash));
+  ipcMain.handle('auto-h3:start-production', (_event, config: AutoH3Config) => {
+    recordGuiProductionStart('IPC_HANDLER_ENTERED', { products: config.selectedProducts, contentTypes: config.selectedContentTypes });
+    if (!localRunnerController) throw new Error('Production Start unavailable: local controller was not initialized.');
+    recordGuiProductionStart('START_PRODUCTION_CALLED');
+    return localRunnerController.startProduction(config);
+  });
+  ipcMain.handle('auto-h3:update-production-settings', (_event, sessionId: string, brief: H3VideoBrief) => localRunnerController?.updateProductionSettings(sessionId, brief));
+  ipcMain.handle('auto-h3:canary-readiness', () => localRunnerController?.canaryReadiness());
+  ipcMain.handle('auto-h3:canary-status', (_event, sessionId: string) => localRunnerController?.canaryStatus(sessionId));
+  ipcMain.handle('auto-h3:stop-canary-after-current', (_event, sessionId: string) => localRunnerController?.stopAfterCurrent(sessionId));
+  ipcMain.handle('auto-h3:stop-canary-now', (_event, sessionId: string) => localRunnerController?.stopNow(sessionId));
+  ipcMain.handle('auto-h3:download-canary-artifact', (_event, sessionId: string, jobId: string, destinationRoot: string) => localRunnerController?.downloadCanaryArtifact(sessionId, jobId, destinationRoot));
+  ipcMain.handle('auto-h3:sync-canary-artifacts', (_event, sessionId: string, destinationRoot: string) => localRunnerController?.syncCanaryArtifacts(sessionId, destinationRoot));
   ipcMain.handle('auto-h3:start', (_event, config: AutoH3Config) => autoH3Service?.start(config));
   ipcMain.handle('auto-h3:resume', (_event, id: string, brief?: H3VideoBrief) => autoH3Service?.resume(id, brief));
   ipcMain.handle('auto-h3:update-current-brief', (_event, brief: H3VideoBrief) => { autoH3Service?.updateCurrentBrief(brief); });
@@ -219,6 +241,17 @@ function registerIpc(): void {
     if (autoH3Service?.snapshot().sessions.some(session => session.status !== 'STOPPED')) throw new Error('Stop the Auto Session before generating a single video.');
     if (request.autoJobId) throw new Error('Auto jobs must be created by the scheduler.');
     return computeService?.submitH3(request, event.sender.id);
+  });
+  ipcMain.handle('cta:render', async (_event, brief: H3VideoBrief) => {
+    if (autoH3Service?.snapshot().sessions.some(session => session.status !== 'STOPPED')) throw new Error('Stop the Auto Session before generating a single CTA.');
+    const product = getProduct(brief.product);
+    if (!product) throw new Error('Unknown CTA product.');
+    if (product.id === 'full-series') throw new Error('CTA Full Series requires a verified composite master; the serum thumbnail is not a Full Series master.');
+    const masterPath = join(currentSettings().productAssetsDirectory, product.imagePath.replaceAll('\\', '/').split('/').at(-1)!);
+    const date = new Date().toISOString().slice(0, 10);
+    return renderCtaEndCard({ productId: product.id, masterPath, outputPath: join(String.raw`D:\AI Videos`, date, product.id, 'CTA-End-Card', `${randomUUID()}.mp4`),
+      settings: brief.cta ?? defaultCtaSettings, language: brief.language,
+      aspectRatio: brief.aspectRatio === 'Custom' ? '9:16' : brief.aspectRatio, seed: Math.floor(Math.random() * 0xffffffff) });
   });
   ipcMain.handle('compute:get-job-state', (_event, localJobId: string) => computeService?.getJobState(localJobId));
   ipcMain.handle('compute:list-jobs', (_event, limit?: number) => computeService?.listJobs(limit ?? 100) ?? []);
@@ -444,7 +477,7 @@ async function createWindow(): Promise<void> {
       }
     }
 
-    if (smokeAutoH3 && ready) {
+    if ((smokeAutoH3 || smokeGuiProductionStartStageOnly || smokeRealAutoH3) && ready) {
       await mainWindow.webContents.executeJavaScript("document.querySelector('.sidebar a[href=\"#/h3-video-prompts\"]')?.click()");
       await waitForRendererSelector('.auto-h3-panel');
       await mainWindow.webContents.executeJavaScript(`(() => {
@@ -452,16 +485,16 @@ async function createWindow(): Promise<void> {
         const setter = Object.getOwnPropertyDescriptor(HTMLSelectElement.prototype, 'value').set;
         setter.call(select, 'auto'); select.dispatchEvent(new Event('change', { bubbles: true }));
       })()`);
-      for (let attempt = 0; attempt < 60; attempt++) {
-        const settled = await mainWindow.webContents.executeJavaScript("document.querySelector('.auto-h3-panel')?.textContent.includes('China Production Runner: READY')").catch(() => false);
+      for (let attempt = 0; attempt < (smokeRealAutoH3 ? 1200 : 60); attempt++) {
+        const settled = await mainWindow.webContents.executeJavaScript("Boolean(Array.from(document.querySelectorAll('button')).find((button) => button.textContent?.trim() === 'START AUTO RUN' && !button.disabled))").catch(() => false);
         if (settled) break;
         await new Promise(resolveDelay => setTimeout(resolveDelay, 250));
       }
       console.log('Auto H3 smoke: ' + await mainWindow.webContents.executeJavaScript(`JSON.stringify({
-        start: document.querySelector('.auto-h3-panel')?.textContent.includes('START CHINA AUTO RUN'),
-        productionReady: document.querySelector('.auto-h3-panel')?.textContent.includes('China Production Runner: READY'),
-        staleInstallWarningPresent: document.querySelector('.auto-h3-panel')?.textContent.includes('Install and start the production China runner before starting Auto Run.'),
-        startEnabled: !Array.from(document.querySelectorAll('button')).find((button) => button.textContent?.trim() === 'START CHINA AUTO RUN')?.disabled,
+        start: document.querySelector('.auto-h3-panel')?.textContent.includes('START AUTO RUN'),
+        productionReady: document.querySelector('.local-engine-panel')?.textContent.includes('READY'),
+        staleInstallWarningPresent: false,
+        startEnabled: !Array.from(document.querySelectorAll('button')).find((button) => button.textContent?.trim() === 'START AUTO RUN')?.disabled,
         selected: document.querySelectorAll('.auto-selections input:checked').length,
         overflow: document.querySelector('.auto-h3-panel').scrollWidth > document.querySelector('.auto-h3-panel').clientWidth
       })`));
@@ -470,14 +503,146 @@ async function createWindow(): Promise<void> {
         for (let sample = 0; sample < 7; sample++) {
           samples.push(await mainWindow.webContents.executeJavaScript(`(() => {
             const panel = document.querySelector('.auto-h3-panel');
-            const start = Array.from(document.querySelectorAll('button')).find((button) => button.textContent?.trim() === 'START CHINA AUTO RUN');
-            return { atSeconds: ${sample * 5}, ready: panel?.textContent.includes('China Production Runner: READY'), temporary: panel?.textContent.includes('temporarily unavailable'), incompatible: panel?.textContent.includes('INCOMPATIBLE'), startEnabled: !start?.disabled };
+            const start = Array.from(document.querySelectorAll('button')).find((button) => button.textContent?.trim() === 'START AUTO RUN');
+            return { atSeconds: ${sample * 5}, ready: document.querySelector('.local-engine-panel')?.textContent.includes('READY'), unavailable: document.querySelector('.local-engine-panel')?.textContent.includes('unavailable'), incompatible: panel?.textContent.includes('INCOMPATIBLE'), startEnabled: !start?.disabled };
           })()`));
           if (sample < 6) await new Promise(resolveDelay => setTimeout(resolveDelay, 5_000));
         }
         console.log(`Auto H3 readiness hold: ${JSON.stringify(samples)}`);
       }
       console.log(`Auto H3 smoke active sessions: ${autoH3Service?.snapshot().sessions.length}`);
+      if (smokeGuiProductionStartStageOnly) {
+        for (let attempt = 0; attempt < 240; attempt++) {
+          const enabled = await mainWindow.webContents.executeJavaScript(`(() => {
+            const button = Array.from(document.querySelectorAll('button')).find(candidate => candidate.textContent?.trim() === 'START AUTO RUN');
+            return Boolean(button && !button.disabled);
+          })()`).catch(() => false);
+          if (enabled) break;
+          await new Promise(resolveDelay => setTimeout(resolveDelay, 500));
+        }
+        const selection = await mainWindow.webContents.executeJavaScript(`(() => {
+          const fieldsets = Array.from(document.querySelectorAll('.auto-selections fieldset'));
+          const selectOnly = (fieldset, wanted) => Array.from(fieldset?.querySelectorAll('label') ?? []).forEach((label) => {
+            const input = label.querySelector('input[type="checkbox"]');
+            const shouldCheck = label.textContent.trim() === wanted;
+            if (input && input.checked !== shouldCheck) input.click();
+          });
+          selectOnly(fieldsets[0], ${JSON.stringify(smokeGuiProduct)});
+          selectOnly(fieldsets[1], ${JSON.stringify(smokeGuiContentType)});
+          return {
+            products: Array.from(fieldsets[0]?.querySelectorAll('label') ?? []).filter(label => label.querySelector('input')?.checked).map(label => label.textContent.trim()),
+            contentTypes: Array.from(fieldsets[1]?.querySelectorAll('label') ?? []).filter(label => label.querySelector('input')?.checked).map(label => label.textContent.trim())
+          };
+        })()`);
+        recordGuiProductionStart('RENDERER_SELECTION_COMPLETE', selection);
+        await new Promise(resolveDelay => setTimeout(resolveDelay, 250));
+        const click = await mainWindow.webContents.executeJavaScript(`(() => {
+          const button = Array.from(document.querySelectorAll('button')).find(candidate => candidate.textContent?.trim() === 'START AUTO RUN');
+          if (!button) return { found: false, clicked: false, disabled: null };
+          const disabled = button.disabled;
+          if (!disabled) button.click();
+          return { found: true, clicked: !disabled, disabled };
+        })()`);
+        recordGuiProductionStart('VISIBLE_BUTTON_CLICK', click);
+        for (let attempt = 0; attempt < 240 && !guiProductionStartTrace.some(entry => entry.stage === 'START_HTTP_BLOCKED'); attempt++) await new Promise(resolveDelay => setTimeout(resolveDelay, 500));
+        for (let attempt = 0; attempt < 40; attempt++) {
+          const errorVisible = await mainWindow.webContents.executeJavaScript(`Boolean(document.querySelector('.auto-h3-panel [role="alert"]')?.textContent?.trim())`).catch(() => false);
+          if (errorVisible) break;
+          await new Promise(resolveDelay => setTimeout(resolveDelay, 100));
+        }
+        const ui = await mainWindow.webContents.executeJavaScript(`(() => ({
+          error: document.querySelector('.auto-h3-panel [role="alert"]')?.textContent ?? null,
+          buttonDisabled: Array.from(document.querySelectorAll('button')).find(candidate => candidate.textContent?.trim() === 'START AUTO RUN')?.disabled ?? null
+        }))()`);
+        await mainWindow.webContents.executeJavaScript(`Array.from(document.querySelectorAll('button')).find(candidate => candidate.textContent?.trim() === 'START AUTO RUN')?.scrollIntoView({ block: 'center' })`);
+        console.log(`GUI_PRODUCTION_START_RESULT=${JSON.stringify({ trace: guiProductionStartTrace, ui })}`);
+      }
+      if (smokeRealAutoH3) {
+        const initialUi = await mainWindow.webContents.executeJavaScript(`(() => {
+          const text = document.body.innerText;
+          return {
+            visibleLocal: (text.match(/China/gi) ?? []).length,
+            visibleRemote: (text.match(/Remote/gi) ?? []).length,
+            localEngine: document.querySelector('.local-engine-panel')?.innerText ?? null,
+            startLabel: Array.from(document.querySelectorAll('button')).find(button => button.textContent?.trim() === 'START AUTO RUN')?.textContent?.trim() ?? null
+          };
+        })()`);
+        console.log(`REAL_AUTO_H3_INITIAL_UI=${JSON.stringify(initialUi)}`);
+        const selection = await mainWindow.webContents.executeJavaScript(`(() => {
+          const fieldsets = Array.from(document.querySelectorAll('.auto-selections fieldset'));
+          const selectOnly = (fieldset, wanted) => Array.from(fieldset?.querySelectorAll('label') ?? []).forEach(label => {
+            const input = label.querySelector('input[type="checkbox"]');
+            const shouldCheck = label.textContent.trim() === wanted;
+            if (input && input.checked !== shouldCheck) input.click();
+          });
+          selectOnly(fieldsets[0], 'Serum');
+          selectOnly(fieldsets[1], 'Support B-Roll');
+          return {
+            products: Array.from(fieldsets[0]?.querySelectorAll('label') ?? []).filter(label => label.querySelector('input')?.checked).map(label => label.textContent.trim()),
+            contentTypes: Array.from(fieldsets[1]?.querySelectorAll('label') ?? []).filter(label => label.querySelector('input')?.checked).map(label => label.textContent.trim())
+          };
+        })()`);
+        console.log(`REAL_AUTO_H3_SELECTION=${JSON.stringify(selection)}`);
+        await new Promise(resolveDelay => setTimeout(resolveDelay, 250));
+        const clicked = await mainWindow.webContents.executeJavaScript(`(() => {
+          const button = Array.from(document.querySelectorAll('button')).find(candidate => candidate.textContent?.trim() === 'START AUTO RUN');
+          if (!button || button.disabled) return false;
+          button.click();
+          return true;
+        })()`);
+        console.log(`REAL_AUTO_H3_START_CLICKED=${clicked}`);
+        if (!clicked) throw new Error('START AUTO RUN did not become enabled within five minutes.');
+        const client = new LocalAutoH3Client(RUNNER_BASE_URL, fetch, 180_000);
+        let runningEvidence: Record<string, unknown> | null = null;
+        for (let attempt = 0; attempt < 600; attempt += 1) {
+          const session = (await client.currentSession()).session;
+          const jobs = session ? (await client.jobs(session.sessionId)).jobs : [];
+          const job = jobs.at(-1) ?? null;
+          if (session?.status === 'PRODUCTION_RUNNING' && job && (job.phase === 'RUNNING' || job.promptId)) {
+            runningEvidence = { sessionId: session.sessionId, status: session.status, jobId: job.jobId, phase: job.phase, promptId: job.promptId, product: job.product, contentType: job.contentType };
+            break;
+          }
+          await new Promise(resolveDelay => setTimeout(resolveDelay, 1_000));
+        }
+        if (!runningEvidence) throw new Error('The first local H3 job did not reach an authoritative running state within 10 minutes.');
+        console.log(`REAL_AUTO_H3_RUNNING=${JSON.stringify(runningEvidence)}`);
+        const stopClicked = await mainWindow.webContents.executeJavaScript(`(() => {
+          const button = Array.from(document.querySelectorAll('button')).find(candidate => candidate.textContent?.trim() === 'STOP AFTER CURRENT');
+          if (!button || button.disabled) return false;
+          button.click();
+          return true;
+        })()`);
+        console.log(`REAL_AUTO_H3_STOP_AFTER_CURRENT_CLICKED=${stopClicked}`);
+        let finalEvidence: Record<string, unknown> | null = null;
+        for (let attempt = 0; attempt < 1_800; attempt += 1) {
+          const session = (await client.currentSession()).session;
+          const jobs = session ? (await client.jobs(session.sessionId)).jobs : [];
+          const job = jobs.at(-1) ?? null;
+          if (session?.status === 'STOPPED' && job && ['COMPLETED', 'FAILED'].includes(job.phase)) {
+            finalEvidence = {
+              sessionId: session.sessionId,
+              status: session.status,
+              stopAfterCurrent: session.stopAfterCurrent,
+              jobId: job.jobId,
+              phase: job.phase,
+              product: job.product,
+              contentType: job.contentType,
+              archivePath: job.archivePath,
+              archiveSha256: job.archiveSha256,
+              vramReleaseRequested: job.vramAudit?.h3VramReleaseRequested,
+              vramReleaseSucceeded: job.vramAudit?.h3VramReleaseSucceeded,
+              vramPostMeasurementFresh: job.vramAudit?.h3VramPostMeasurementFresh,
+              completedAt: job.completedAt,
+              error: job.error,
+              jobCount: jobs.length
+            };
+            break;
+          }
+          await new Promise(resolveDelay => setTimeout(resolveDelay, 1_000));
+        }
+        if (!finalEvidence) throw new Error('The local H3 session did not reach STOPPED after the current job within 30 minutes.');
+        console.log(`REAL_AUTO_H3_FINAL=${JSON.stringify(finalEvidence)}`);
+      }
     }
 
     if ((smokeCarousel || smokePrepared) && ready) {
@@ -502,8 +667,40 @@ async function createWindow(): Promise<void> {
       await new Promise((resolveDelay) => setTimeout(resolveDelay, 350));
       console.log(`Smoke window state: ${JSON.stringify({ isMaximized: mainWindow.isMaximized(), contentSize: mainWindow.getContentSize() })}`);
     }
+    if (smokeAutoH3 && ready) {
+      await mainWindow.webContents.executeJavaScript("document.querySelector('.local-engine-panel')?.scrollIntoView({ block: 'center' })");
+      await new Promise((resolveDelay) => setTimeout(resolveDelay, 300));
+    }
     mainWindow.showInactive();
     await new Promise((resolveDelay) => setTimeout(resolveDelay, 700));
+    if (smokeGuiProductionStartStageOnly) {
+      const settings = currentSettings();
+      const workflowPath = settings.remoteComfyWorkflowPath;
+      const requiredProductAssets = ['cleanser.png', 'toner.png', 'serum.png', 'eye-cream.png', 'skin-cream.png', 'mask.png'];
+      let workflowJsonOpened = false;
+      try {
+        JSON.parse(readFileSync(workflowPath, 'utf8'));
+        workflowJsonOpened = true;
+      } catch { /* Report the failed packaged-resource check below. */ }
+      writeFileSync(`${smokeOutput}.json`, JSON.stringify({
+        packaged: app.isPackaged,
+        resourcesPath: process.resourcesPath,
+        workflowPath,
+        workflowExists: existsSync(workflowPath),
+        workflowJsonOpened,
+        productAssetsDirectory: settings.productAssetsDirectory,
+        productAssets: requiredProductAssets.map(filename => {
+          const path = join(settings.productAssetsDirectory, filename);
+          return { filename, path, exists: existsSync(path), readableBytes: existsSync(path) ? statSync(path).size : 0 };
+        }),
+        runnerUrl: RUNNER_BASE_URL,
+        comfyUrl: settings.remoteComfyUrl,
+        lmStudioEndpoint: settings.h3PromptEngine.endpoint,
+        selectedProduct: smokeGuiProduct,
+        selectedContentType: smokeGuiContentType,
+        trace: guiProductionStartTrace
+      }, null, 2), 'utf8');
+    }
     const image = await mainWindow.webContents.capturePage();
     writeFileSync(smokeOutput, image.toPNG());
     app.quit();
@@ -512,12 +709,41 @@ async function createWindow(): Promise<void> {
 
 app.whenReady().then(async () => {
   const root = app.isPackaged ? process.resourcesPath : appRoot;
-  settingsStore = new SettingsStore(join(app.getPath('userData'), 'settings.json'), defaultSettings(root));
+  const settingsDefaults = defaultSettings(root);
+  if (app.isPackaged) {
+    settingsDefaults.remoteComfyWorkflowPath = join(process.resourcesPath, 'workflows', 'minimax-h3-api.json');
+    settingsDefaults.productAssetsDirectory = join(process.resourcesPath, 'product-assets');
+    settingsDefaults.referencesDirectory = join(process.resourcesPath, 'references');
+    settingsDefaults.h3SystemPromptPath = join(process.resourcesPath, 'prompts', 'minimax-h3-lmstudio-system.md');
+    settingsDefaults.remoteOutputDirectory = join(app.getPath('userData'), 'outputs');
+  }
+  settingsStore = new SettingsStore(join(app.getPath('userData'), 'settings.json'), settingsDefaults);
   runtimeDatabasePath = resolve(app.getPath('userData'), 'proya-creative-studio.sqlite');
   database = new HistoryDatabase(runtimeDatabasePath, await loadSqlite());
   computeService = new ComputeService(currentSettings, (state) => mainWindow?.webContents.send('compute:job-state', state), !app.isPackaged, database, [join(root, 'product-assets'), join(root, 'references')], referenceAuthorization);
   autoH3Service = new AutoH3Service(database, computeService, currentSettings);
-  chinaShadowController = new ChinaAutoH3ShadowController(database, currentSettings);
+  const guiSafeClientFactory = smokeGuiProductionStartStageOnly ? (url: string) => new LocalAutoH3Client(url, async (input, init) => {
+    const requestUrl = typeof input === 'string' ? input : input instanceof URL ? input.href : input.url;
+    const path = new URL(requestUrl).pathname + new URL(requestUrl).search;
+    const method = init?.method ?? 'GET';
+    if (method === 'POST' && new URL(requestUrl).pathname === '/proya/auto/start') {
+      recordGuiProductionStart('START_HTTP_BLOCKED', { method, path, requestBody: init?.body ?? null });
+      throw new Error('SAFE_PACKAGED_GUI_TEST_STOPPED_BEFORE_START');
+    }
+    recordGuiProductionStart('HTTP_REQUEST_SENT', { method, path, requestBody: method === 'POST' ? init?.body ?? null : null });
+    const response = await fetch(input, init);
+    const responseBody = await response.clone().text();
+    let responseSummary: unknown = responseBody;
+    if (responseBody.length > 4_096) {
+      try {
+        const parsed = JSON.parse(responseBody) as { session?: { sessionId?: string; status?: string; revision?: number; currentJobId?: string | null } };
+        responseSummary = parsed.session ? { session: { sessionId: parsed.session.sessionId, status: parsed.session.status, revision: parsed.session.revision, currentJobId: parsed.session.currentJobId } } : `<${responseBody.length} byte response>`;
+      } catch { responseSummary = `<${responseBody.length} byte response>`; }
+    }
+    recordGuiProductionStart('HTTP_RESPONSE', { method, path, status: response.status, responseBody: responseSummary });
+    return response;
+  }, 180_000) : undefined;
+  localRunnerController = new LocalAutoH3Controller(database, currentSettings, guiSafeClientFactory);
   runtimeStaticDiagnostics = createRuntimeStaticDiagnostics();
   console.info(`PROYA runtime provenance ${JSON.stringify(runtimeDiagnostics())}`);
   protocol.handle('proya-asset', (request) => {
@@ -529,12 +755,12 @@ app.whenReady().then(async () => {
     return net.fetch(pathToFileURL(absolute).toString());
   });
   registerIpc();
+  void localServices.ensureStarted().catch(reason => console.error(`Local service startup failed: ${reason instanceof Error ? reason.message : String(reason)}`));
   screen.on('display-metrics-changed', requestChatBoundsRefresh);
   await createWindow();
   if (!smokeOutput) {
-    autoH3Service?.activate();
     void computeService?.restoreJobs().catch((reason) => {
-      console.error(`Remote H3 job restore failed: ${reason instanceof Error ? reason.message : String(reason)}`);
+      console.error(`Local H3 job restore failed: ${reason instanceof Error ? reason.message : String(reason)}`);
     });
   }
   app.on('activate', async () => { if (BrowserWindow.getAllWindows().length === 0) await createWindow(); });
